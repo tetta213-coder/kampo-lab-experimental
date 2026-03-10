@@ -16,7 +16,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌿 証空間の地図：プロフェッショナル・エディション")
+st.title("🌿 証空間の地図")
 
 # --- データの読み込みと座標の固定計算 ---
 @st.cache_data
