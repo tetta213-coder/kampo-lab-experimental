@@ -16,7 +16,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌿 証空間の地図：プロフェッショナル・エディション")
+st.title("🌿 証空間の地図")
 
 # --- データの読み込みと座標の固定計算 ---
 @st.cache_data
@@ -44,12 +44,19 @@ age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, val
 zoom_scale = st.sidebar.slider("表示範囲 (小さいほど拡大)", 5, 100, 20)
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
-defaults = {'虚実': 0.5}
+
+# 【復活】吉野先生指定の臨床的デフォルト値
+defaults = {
+    '虚実': 0.5,
+    '気虚': 0.2,
+    '血虚': 0.2,
+    '水毒': 0.2
+}
 
 sho_input = {}
 sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
 for name in sho_names:
-    val = defaults.get(name, 0.0)
+    val = defaults.get(name, 0.0) # 指定がなければ 0.0
     sho_input[name] = st.sidebar.slider(f"{name}", 0.0, 1.0, val, key=f"slider_{name}")
 
 st.sidebar.subheader("2. 特定の随伴症状")
@@ -58,21 +65,20 @@ symptom_labels = ["安心鎮静 (不眠・不安)", "認知知能 (物忘れ)", 
 for label in symptom_labels:
     raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True, key=f"radio_{label}")
 
-# --- 4. 計算ロジック：ダイレクト・レスポンス版 ---
+# --- 4. 計算ロジック ---
 def create_patient_vec(sho, raw, age):
     p = {k: 0.05 for k in yakuno_cols} 
     
     kyo_val = max(0, 0.5 - sho['虚実']) * 2.0
     jitsu_val = max(0, sho['虚実'] - 0.5) * 2.0
     
-    # --- 気・血・水のダイレクト反映（ブースト） ---
+    # 気・血・水のブースト反映
     p["補気"] += (sho['気虚'] * 1.5) + (kyo_val * 0.3)
     p["補血"] += (sho['血虚'] * 1.5) + (kyo_val * 0.3)
     p["利水"] += (sho['水毒'] * 1.5)
     p["潤水"] += (sho['血虚'] * 0.5) + (kyo_val * 0.2)
     
     p["駆瘀血"] += (sho['瘀血'] * 1.5) + (jitsu_val * 0.3)
-    # 【修正箇所】文法エラーを直しました
     p["瀉下"] += (jitsu_val * 0.5)
     
     p["理気"] += sho['気鬱'] * 1.5
@@ -106,6 +112,7 @@ df_full['raw_sim'] = cosine_similarity([patient_vec], yakuno_data)[0]
 spec_bonus = 1.0 / (np.sum(yakuno_data, axis=1) + 1.0)
 df_full['一致度'] = df_full['raw_sim'] * (1.0 + spec_bonus * 0.2)
 
+# 表示色の相対スケーリング
 sim_min, sim_max = df_full['一致度'].min(), df_full['一致度'].max()
 df_full['表示色'] = (df_full['一致度'] - sim_min) / (sim_max - sim_min + 1e-9)
 
