@@ -44,7 +44,6 @@ age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, val
 zoom_scale = st.sidebar.slider("表示範囲 (小さいほど拡大)", 5, 100, 20)
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
-# デフォルト値をさらに「静か」にし、動かした時の変化を見やすくしました
 defaults = {'虚実': 0.5}
 
 sho_input = {}
@@ -61,32 +60,26 @@ for label in symptom_labels:
 
 # --- 4. 計算ロジック：ダイレクト・レスポンス版 ---
 def create_patient_vec(sho, raw, age):
-    p = {k: 0.05 for k in yakuno_cols} # ベースラインを下げて変化を際立たせる
+    p = {k: 0.05 for k in yakuno_cols} 
     
-    # 【虚実の重み】
-    kyo_val = max(0, 0.5 - sho['虚実']) * 2.0  # 虚に振るほど 1.0 に近づく
-    jitsu_val = max(0, sho['虚実'] - 0.5) * 2.0 # 実に振るほど 1.0 に近づく
+    kyo_val = max(0, 0.5 - sho['虚実']) * 2.0
+    jitsu_val = max(0, sho['虚実'] - 0.5) * 2.0
     
-    # --- 気・血・水のダイレクト反映 ---
-    # スライダーの値を 1.5倍 して薬能に直結（感度ブースト）
-    p["補気"] += sho['気虚'] * 1.5 + (kyo_val * 0.3)
-    p["補血"] += sho['血虚'] * 1.5 + (kyo_val * 0.3)
-    p["利水"] += sho['水毒'] * 1.5
-    p["潤水"] += sho['血虚'] * 0.5 + (kyo_val * 0.2) # 血虚は乾燥も伴う
+    # --- 気・血・水のダイレクト反映（ブースト） ---
+    p["補気"] += (sho['気虚'] * 1.5) + (kyo_val * 0.3)
+    p["補血"] += (sho['血虚'] * 1.5) + (kyo_val * 0.3)
+    p["利水"] += (sho['水毒'] * 1.5)
+    p["潤水"] += (sho['血虚'] * 0.5) + (kyo_val * 0.2)
     
-    # 瀉的要素（実のときに強まる）
-    p["駆瘀血"] += sho['瘀血'] * 1.5 + (jitsu_val * 0.3)
-    p["瀉下"] += jitsu_factor = (jitsu_val * 0.5)
+    p["駆瘀血"] += (sho['瘀血'] * 1.5) + (jitsu_val * 0.3)
+    # 【修正箇所】文法エラーを直しました
+    p["瀉下"] += (jitsu_val * 0.5)
     
-    # 気の巡り
     p["理気"] += sho['気鬱'] * 1.5
     p["降気"] += sho['気逆'] * 1.5
-    
-    # 寒熱
     p["温"] += sho['寒'] * 1.5
     p["清"] += sho['熱'] * 1.5
     
-    # 腎虚・年齢ブースト（これもダイレクトに補う軸へ）
     age_jinkyo_bonus = max(0, (age - 40) * 0.02)
     total_jk = min(1.0, sho['腎虚'] + age_jinkyo_bonus)
     p["補気"] += total_jk * 0.5
@@ -94,7 +87,6 @@ def create_patient_vec(sho, raw, age):
     p["潤水"] += total_jk * 0.8
     p["利水"] += total_jk * 0.4
 
-    # 随伴症状（スイッチ的に機能）
     mapping = {
         "安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"], "鎮痙 (足のつり)": ["鎮痙"], 
         "眼精疲労": ["眼精疲労"], "清頭目 (のぼせ・頭痛)": ["清頭目"], "排膿 (にきび)": ["排膿"], 
@@ -103,20 +95,17 @@ def create_patient_vec(sho, raw, age):
     }
     for label, target_keys in mapping.items():
         if raw.get(label) == "あり":
-            for k in target_keys: p[k] = 1.2 # 他より少し強めに設定
+            for k in target_keys: p[k] = 1.2
 
-    # 二乗によるシャープ化
     return np.array([p[k]**2 for k in yakuno_cols])
 
 patient_vec = create_patient_vec(sho_input, raw_input, age)
 yakuno_data = df_full[yakuno_cols].fillna(0).values
 
-# マッチング
 df_full['raw_sim'] = cosine_similarity([patient_vec], yakuno_data)[0]
 spec_bonus = 1.0 / (np.sum(yakuno_data, axis=1) + 1.0)
 df_full['一致度'] = df_full['raw_sim'] * (1.0 + spec_bonus * 0.2)
 
-# 色付け
 sim_min, sim_max = df_full['一致度'].min(), df_full['一致度'].max()
 df_full['表示色'] = (df_full['一致度'] - sim_min) / (sim_max - sim_min + 1e-9)
 
