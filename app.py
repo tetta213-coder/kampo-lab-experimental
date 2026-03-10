@@ -16,7 +16,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌿 証空間の地図")
+st.title("🌿 証空間の地図：プロフェッショナル・エディション")
 
 # --- データの読み込みと座標の固定計算 ---
 @st.cache_data
@@ -31,7 +31,6 @@ def load_fixed_data():
     ]
     
     yakuno_data = df[yakuno_cols].fillna(0).values
-    # 地図の座標を固定
     tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
     coords = tsne.fit_transform(yakuno_data + np.random.normal(0, 1e-6, yakuno_data.shape))
     df['x'], df['y'] = coords[:, 0], coords[:, 1]
@@ -45,14 +44,13 @@ age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, val
 zoom_scale = st.sidebar.slider("表示範囲 (小さいほど拡大)", 5, 100, 20)
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
-
-# 臨床的デフォルトプロファイル
-defaults = {'虚実': 0.5, '気虚': 0.2, '水毒': 0.2}
+# デフォルト値をさらに「静か」にし、動かした時の変化を見やすくしました
+defaults = {'虚実': 0.5}
 
 sho_input = {}
 sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
 for name in sho_names:
-    val = defaults.get(name, 0.1)
+    val = defaults.get(name, 0.0)
     sho_input[name] = st.sidebar.slider(f"{name}", 0.0, 1.0, val, key=f"slider_{name}")
 
 st.sidebar.subheader("2. 特定の随伴症状")
@@ -61,40 +59,42 @@ symptom_labels = ["安心鎮静 (不眠・不安)", "認知知能 (物忘れ)", 
 for label in symptom_labels:
     raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True, key=f"radio_{label}")
 
-# --- 4. 計算ロジック：虚実をベクトルへ翻訳 ---
+# --- 4. 計算ロジック：ダイレクト・レスポンス版 ---
 def create_patient_vec(sho, raw, age):
-    p = {k: 0.1 for k in yakuno_cols} 
+    p = {k: 0.05 for k in yakuno_cols} # ベースラインを下げて変化を際立たせる
     
-    # 【虚実の翻訳】
-    # 虚（0.0に近い）ほど「補う」軸を強化
-    kyo_factor = max(0, 0.5 - sho['虚実']) * 2.0
-    p["補気"] += kyo_factor * 0.5
-    p["補血"] += kyo_factor * 0.5
+    # 【虚実の重み】
+    kyo_val = max(0, 0.5 - sho['虚実']) * 2.0  # 虚に振るほど 1.0 に近づく
+    jitsu_val = max(0, sho['虚実'] - 0.5) * 2.0 # 実に振るほど 1.0 に近づく
     
-    # 実（1.0に近い）ほど「出す・巡らせる」軸を強化
-    jitsu_factor = max(0, sho['虚実'] - 0.5) * 2.0
-    p["瀉下"] += jitsu_factor * 0.6
-    p["清"] += jitsu_factor * 0.4
-    p["駆瘀血"] += jitsu_factor * 0.3
+    # --- 気・血・水のダイレクト反映 ---
+    # スライダーの値を 1.5倍 して薬能に直結（感度ブースト）
+    p["補気"] += sho['気虚'] * 1.5 + (kyo_val * 0.3)
+    p["補血"] += sho['血虚'] * 1.5 + (kyo_val * 0.3)
+    p["利水"] += sho['水毒'] * 1.5
+    p["潤水"] += sho['血虚'] * 0.5 + (kyo_val * 0.2) # 血虚は乾燥も伴う
     
-    # 腎虚・年齢ブースト
+    # 瀉的要素（実のときに強まる）
+    p["駆瘀血"] += sho['瘀血'] * 1.5 + (jitsu_val * 0.3)
+    p["瀉下"] += jitsu_factor = (jitsu_val * 0.5)
+    
+    # 気の巡り
+    p["理気"] += sho['気鬱'] * 1.5
+    p["降気"] += sho['気逆'] * 1.5
+    
+    # 寒熱
+    p["温"] += sho['寒'] * 1.5
+    p["清"] += sho['熱'] * 1.5
+    
+    # 腎虚・年齢ブースト（これもダイレクトに補う軸へ）
     age_jinkyo_bonus = max(0, (age - 40) * 0.02)
     total_jk = min(1.0, sho['腎虚'] + age_jinkyo_bonus)
-    p["補気"] += (total_jk * 0.8)
-    p["補血"] += (total_jk * 0.8)
-    p["潤水"] += (total_jk * 0.9)
-    p["利水"] += (total_jk * 0.6)
-    
-    # その他の基本指標
-    p.update({
-        "理気": p.get("理気", 0.1) + sho['気鬱'], 
-        "降気": p.get("降気", 0.1) + sho['気逆'], 
-        "駆瘀血": p.get("駆瘀血", 0.1) + sho['瘀血'], 
-        "温": p.get("温", 0.1) + sho['寒'], 
-        "清": p.get("清", 0.1) + sho['熱']
-    })
+    p["補気"] += total_jk * 0.5
+    p["補血"] += total_jk * 0.5
+    p["潤水"] += total_jk * 0.8
+    p["利水"] += total_jk * 0.4
 
-    # 随伴症状（最大強調）
+    # 随伴症状（スイッチ的に機能）
     mapping = {
         "安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"], "鎮痙 (足のつり)": ["鎮痙"], 
         "眼精疲労": ["眼精疲労"], "清頭目 (のぼせ・頭痛)": ["清頭目"], "排膿 (にきび)": ["排膿"], 
@@ -103,10 +103,10 @@ def create_patient_vec(sho, raw, age):
     }
     for label, target_keys in mapping.items():
         if raw.get(label) == "あり":
-            for k in target_keys: p[k] = 1.0
+            for k in target_keys: p[k] = 1.2 # 他より少し強めに設定
 
-    # シャープ化（感度維持のため 1.5乗 に調整）
-    return np.array([p[k]**1.5 for k in yakuno_cols])
+    # 二乗によるシャープ化
+    return np.array([p[k]**2 for k in yakuno_cols])
 
 patient_vec = create_patient_vec(sho_input, raw_input, age)
 yakuno_data = df_full[yakuno_cols].fillna(0).values
@@ -116,7 +116,7 @@ df_full['raw_sim'] = cosine_similarity([patient_vec], yakuno_data)[0]
 spec_bonus = 1.0 / (np.sum(yakuno_data, axis=1) + 1.0)
 df_full['一致度'] = df_full['raw_sim'] * (1.0 + spec_bonus * 0.2)
 
-# 表示色のスケーリング
+# 色付け
 sim_min, sim_max = df_full['一致度'].min(), df_full['一致度'].max()
 df_full['表示色'] = (df_full['一致度'] - sim_min) / (sim_max - sim_min + 1e-9)
 
@@ -131,7 +131,7 @@ for i, (idx, row) in enumerate(top_3.iterrows()):
 
 st.write("---")
 
-fig = px.scatter(df_full, x='x', y='y', text='formula', color='表示色', color_continuous_scale='Viridis', hover_name='formula', height=700)
+fig = px.scatter(df_full, x='x', y='y', text='formula', color='表示色', color_continuous_scale='Viridis', hover_name='formula', height=750)
 fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', marker=dict(symbol='star', size=75, color='red', line=dict(width=3, color='red')), text=["あなたの現在地"], textposition="top center", textfont=dict(size=22, color='red', family="HiraKakuPro-W6"), name="現在の証"))
 fig.update_traces(textposition='top center', marker=dict(size=11))
 fig.update_layout(plot_bgcolor='white', xaxis=dict(visible=False, range=[star_x - zoom_scale, star_x + zoom_scale]), yaxis=dict(visible=False, range=[star_y - zoom_scale, star_y + zoom_scale]), showlegend=False, uirevision='constant', margin=dict(l=10, r=10, t=10, b=10))
