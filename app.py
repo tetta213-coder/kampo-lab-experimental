@@ -18,7 +18,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌿 証空間の地図")
+st.title("🌿 証空間の地図：プロフェッショナル・エディション")
 
 @st.cache_data
 def load_data():
@@ -37,7 +37,7 @@ yakuno_cols = [
 # --- サイドバー：入力インターフェース ---
 st.sidebar.header("👤 患者の病態入力")
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
-zoom_scale = st.sidebar.slider("ズーム倍率 (小さいほど拡大)", 5, 100, 15)
+zoom_scale = st.sidebar.slider("表示範囲 (小さいほど拡大)", 5, 100, 20)
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
 sho_input = {}
@@ -51,10 +51,9 @@ symptom_labels = ["安心鎮静 (不眠・不安)", "認知知能 (物忘れ)", 
 for label in symptom_labels:
     raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True, key=f"radio_{label}")
 
-# --- 4. 計算ロジック：患者ベクトル生成（シャープ化） ---
+# --- 4. 計算ロジック ---
 def create_patient_vec(sho, raw, age):
     p = {k: 0.0 for k in yakuno_cols}
-    # 年齢による腎虚ブースト
     age_jinkyo_bonus = max(0, (age - 40) * 0.02)
     total_jk = min(1.0, sho['腎虚'] + age_jinkyo_bonus)
     
@@ -82,38 +81,66 @@ def create_patient_vec(sho, raw, age):
 
 patient_vec = create_patient_vec(sho_input, raw_input, age)
 
-# --- 5. 地図とマッチングの計算（順序修正済） ---
-# A. まず処方データを用意
+# --- 5. 地図とマッチングの計算 ---
 yakuno_data = df_full[yakuno_cols].fillna(0).values
 
-# B. t-SNEで座標を計算し、df_fullに「x, y」を追加（★を計算する前に！）
+# A. t-SNE座標計算
 tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
 coords = tsne.fit_transform(yakuno_data + np.random.normal(0, 1e-6, yakuno_data.shape))
 df_full['x'], df_full['y'] = coords[:, 0], coords[:, 1]
 
-# C. マッチング（一致度）の計算
-specialist_bonus = 1.0 / (np.sum(yakuno_data, axis=1) + 1.0)
-raw_similarities = cosine_similarity([patient_vec], yakuno_data)[0]
-df_full['一致度'] = raw_similarities * (1.0 + specialist_bonus * 0.2)
-df_full['一致度'] = df_full['一致度'] / df_full['一致度'].max()
+# B. 一致度の計算（nan回避策を導入）
+if np.sum(patient_vec) == 0:
+    # 全く入力がない場合は一致度を0にする
+    df_full['一致度'] = 0.0
+else:
+    raw_similarities = cosine_similarity([patient_vec], yakuno_data)[0]
+    specialist_bonus = 1.0 / (np.sum(yakuno_data, axis=1) + 1.0)
+    # 専門性ボーナスを乗算し、正規化
+    df_full['一致度'] = raw_similarities * (1.0 + specialist_bonus * 0.2)
+    max_score = df_full['一致度'].max()
+    if max_score > 0:
+        df_full['一致度'] = df_full['一致度'] / max_score
 
-# D. 【ここ！】座標が入った後の df_full からトップ3を抽出
+# トップ3の抽出
 top_3 = df_full.sort_values('一致度', ascending=False).head(3)
-
-# E. 座標が確実に存在するので、中心点を計算できる
 star_x, star_y = top_3['x'].mean(), top_3['y'].mean()
 
-# --- 表示 ---
+# --- 6. 表示 ---
 st.subheader("🌟 推奨処方（特化型優先）")
 cols = st.columns(3)
 for i, (idx, row) in enumerate(top_3.iterrows()):
-    cols[i].metric(f"{i+1}. {row['formula']}", f"{row['一致度']:.1%}")
+    # 0%の場合は「未入力」と表示
+    val = f"{row['一致度']:.1%}" if row['一致度'] > 0 else "---"
+    cols[i].metric(f"{i+1}. {row['formula']}", val)
 
 st.write("---")
 
-fig = px.scatter(df_full, x='x', y='y', text='formula', color='一致度', color_continuous_scale='Viridis', hover_name='formula', height=750)
-fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', marker=dict(symbol='star', size=75, color='red', line=dict(width=3, color='red')), text=["あなたの現在地"], textposition="top center", textfont=dict(size=24, color='red', family="HiraKakuPro-W6"), name="現在の証"))
-fig.update_traces(textposition='top center', marker=dict(size=12))
-fig.update_layout(plot_bgcolor='white', xaxis=dict(visible=False, range=[star_x - zoom_scale, star_x + zoom_scale]), yaxis=dict(visible=False, range=[star_y - zoom_scale, star_y + zoom_scale]), showlegend=False, uirevision='constant', margin=dict(l=0, r=0, t=0, b=0))
+# マップ描画
+fig = px.scatter(
+    df_full, x='x', y='y', text='formula', 
+    color='一致度', color_continuous_scale='Viridis',
+    hover_name='formula', height=700
+)
+
+# あなたの現在地（★）
+fig.add_trace(go.Scatter(
+    x=[star_x], y=[star_y], mode='markers+text',
+    marker=dict(symbol='star', size=70, color='red', line=dict(width=3, color='red')),
+    text=["あなたの現在地"], textposition="top center",
+    textfont=dict(size=22, color='red', family="HiraKakuPro-W6"),
+    name="現在の証"
+))
+
+# 処方の文字が重ならないよう調整
+fig.update_traces(textposition='top center', marker=dict(size=10))
+
+fig.update_layout(
+    plot_bgcolor='white',
+    xaxis=dict(visible=False, range=[star_x - zoom_scale, star_x + zoom_scale]),
+    yaxis=dict(visible=False, range=[star_y - zoom_scale, star_y + zoom_scale]),
+    showlegend=False, uirevision='constant',
+    margin=dict(l=10, r=10, t=10, b=10)
+)
 
 st.plotly_chart(fig, use_container_width=True)
