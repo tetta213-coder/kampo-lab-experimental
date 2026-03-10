@@ -108,18 +108,18 @@ fig = px.scatter(
     hover_name='formula', height=800
 )
 
-# 【修正ポイント】星を巨大化し、ラベルから星マークを削除
+# 【修正ポイント】枠線（line）も赤に統一し、サイズを最大級に維持
 fig.add_trace(go.Scatter(
     x=[star_x], y=[star_y], mode='markers+text',
     marker=dict(
         symbol='star', 
-        size=70,          # 巨大化！
+        size=75,          # さらに少し大きくしました
         color='red', 
-        line=dict(width=4, color='gold') # 枠をゴールドにしてさらに強調
+        line=dict(width=3, color='red') # 枠も赤で統一！
     ),
-    text=["あなたの現在地"], # ラベルから★を削除
+    text=["あなたの現在地"], 
     textposition="top center", 
-    textfont=dict(size=22, color='red', family="HiraKakuPro-W6"), # 文字もより大きく
+    textfont=dict(size=24, color='red', family="HiraKakuPro-W6"), # 文字も赤
     name="現在の証"
 ))
 
