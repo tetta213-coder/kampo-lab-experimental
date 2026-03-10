@@ -18,7 +18,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌿 証空間の地図：148処方の宇宙（特化型チューニング）")
+st.title("🌿 証空間の地図：特化型チューニング版")
 
 @st.cache_data
 def load_data():
@@ -43,7 +43,6 @@ st.sidebar.subheader("1. 基本の10指標 (証)")
 sho_input = {}
 sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
 for name in sho_names:
-    # 初期値を 0.0 にして、動かしたところだけが光るように変更
     sho_input[name] = st.sidebar.slider(f"{name}", 0.0, 1.0, 0.0, key=f"slider_{name}")
 
 st.sidebar.subheader("2. 特定の随伴症状")
@@ -52,17 +51,16 @@ symptom_labels = ["安心鎮静 (不眠・不安)", "認知知能 (物忘れ)", 
 for label in symptom_labels:
     raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True, key=f"radio_{label}")
 
-# --- 計算ロジック：患者ベクトル生成（シャープ化） ---
+# --- 4. 計算ロジック：患者ベクトル生成（シャープ化） ---
 def create_patient_vec(sho, raw, age):
     p = {k: 0.0 for k in yakuno_cols}
-    # 腎虚ブースト（より強力に）
+    # 年齢による腎虚ブースト
     age_jinkyo_bonus = max(0, (age - 40) * 0.02)
     total_jk = min(1.0, sho['腎虚'] + age_jinkyo_bonus)
     
-    # 薬能への配分
     p["補気"] = sho['気虚'] + (total_jk * 0.8)
     p["補血"] = sho['血虚'] + (total_jk * 0.8)
-    p["潤水"] = (total_jk * 0.9) # 腎虚＝乾燥のイメージを強化
+    p["潤水"] = (total_jk * 0.9)
     p["利水"] = sho['水毒'] + (total_jk * 0.6)
     p.update({"理気": sho['気鬱'], "降気": sho['気逆'], "駆瘀血": sho['瘀血'], "温": sho['寒'], "清": sho['熱']})
 
@@ -76,33 +74,33 @@ def create_patient_vec(sho, raw, age):
     }
     for label, target_keys in mapping.items():
         if raw.get(label) == "あり":
-            for k in target_keys: p[k] = 1.0 # 随伴症状は 1.0 で最大強調
+            for k in target_keys: p[k] = 1.0
 
-    # 【重要】二乗によるシャープ化（0.1は0.01に、1.0は1.0に）
+    # 二乗によるシャープ化
     sharp_vec = np.array([p[k]**2 for k in yakuno_cols])
     return sharp_vec
 
 patient_vec = create_patient_vec(sho_input, raw_input, age)
 
-# --- 地図とマッチングの計算 ---
+# --- 5. 地図とマッチングの計算（順序修正済） ---
+# A. まず処方データを用意
 yakuno_data = df_full[yakuno_cols].fillna(0).values
-# 処方側の専門性スコア（全薬能の合計が少ないほど、特定分野のスペシャリストとみなす）
-# 広く浅い処方にペナルティ、狭く深い処方にボーナスを与える
-specialist_bonus = 1.0 / (np.sum(yakuno_data, axis=1) + 1.0)
 
-# コサイン類似度に専門性ボーナスを乗算
-raw_similarities = cosine_similarity([patient_vec], yakuno_data)[0]
-# 専門性ボーナスを少しだけ加味（0.2の重み）
-df_full['一致度'] = raw_similarities * (1.0 + specialist_bonus * 0.2)
-
-# 正規化（0-100%に収める）
-df_full['一致度'] = df_full['一致度'] / df_full['一致度'].max()
-
-top_3 = df_full.sort_values('一致度', ascending=False).head(3)
+# B. t-SNEで座標を計算し、df_fullに「x, y」を追加（★を計算する前に！）
 tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
-# 団子防止ジッター
 coords = tsne.fit_transform(yakuno_data + np.random.normal(0, 1e-6, yakuno_data.shape))
 df_full['x'], df_full['y'] = coords[:, 0], coords[:, 1]
+
+# C. マッチング（一致度）の計算
+specialist_bonus = 1.0 / (np.sum(yakuno_data, axis=1) + 1.0)
+raw_similarities = cosine_similarity([patient_vec], yakuno_data)[0]
+df_full['一致度'] = raw_similarities * (1.0 + specialist_bonus * 0.2)
+df_full['一致度'] = df_full['一致度'] / df_full['一致度'].max()
+
+# D. 【ここ！】座標が入った後の df_full からトップ3を抽出
+top_3 = df_full.sort_values('一致度', ascending=False).head(3)
+
+# E. 座標が確実に存在するので、中心点を計算できる
 star_x, star_y = top_3['x'].mean(), top_3['y'].mean()
 
 # --- 表示 ---
