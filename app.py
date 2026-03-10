@@ -19,6 +19,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# タイトル
 st.title("🌿 証空間の地図：148処方の宇宙")
 
 # 2. データの読み込み
@@ -42,9 +43,9 @@ st.sidebar.header("👤 患者の病態入力")
 # 年齢入力
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
 
-# 【修正】初期値を 15 にして、最初から近くに設定
+# 表示設定
 st.sidebar.subheader("🖼 マップ表示設定")
-zoom_scale = st.sidebar.slider("ズーム倍率 (小さいほど拡大)", 5, 100, 15, key="zoom_slider", help="★を中心とした表示範囲の広さを調整します。")
+zoom_scale = st.sidebar.slider("ズーム倍率 (小さいほど拡大)", 5, 100, 15, key="zoom_slider")
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
 sho_input = {}
@@ -62,9 +63,10 @@ symptom_labels = [
 for label in symptom_labels:
     raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True, key=f"radio_{label}")
 
-# --- 4. 24次元患者ベクトルの生成ロジック ---
+# --- 4. 計算ロジック（患者ベクトル生成） ---
 def create_patient_vec(sho, raw, age):
     p = {k: 0.0 for k in yakuno_cols}
+    # 年齢による腎虚ブースト
     age_jinkyo_bonus = max(0, (age - 40) * 0.02)
     total_jk = min(1.0, sho['腎虚'] + age_jinkyo_bonus)
     
@@ -73,11 +75,7 @@ def create_patient_vec(sho, raw, age):
     p["潤水"] = (total_jk * 0.8)
     p["利水"] = sho['水毒'] + (total_jk * 0.5)
     
-    p["理気"] = sho['気鬱']
-    p["降気"] = sho['気逆']
-    p["駆瘀血"] = sho['瘀血']
-    p["温"] = sho['寒']
-    p["清"] = sho['熱']
+    p.update({"理気": sho['気鬱'], "降気": sho['気逆'], "駆瘀血": sho['瘀血'], "温": sho['寒'], "清": sho['熱']})
 
     mapping = {
         "安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"],
@@ -90,32 +88,41 @@ def create_patient_vec(sho, raw, age):
     for label, target_keys in mapping.items():
         if raw.get(label) == "あり":
             for k in target_keys: p[k] = 0.8
-
     if p["降気"] < 0.3 and sho['気鬱'] > 0.5 and sho['熱'] > 0.5:
         p["降気"] = (sho['気鬱'] + sho['熱']) / 2
     return np.array([p[k] for k in yakuno_cols])
 
 patient_vec = create_patient_vec(sho_input, raw_input, age)
 
-# --- 5. 地図の計算 ---
+# --- 5. 地図の座標とマッチングの計算（描画の前に行う） ---
 yakuno_data = df_full[yakuno_cols].fillna(0)
 yakuno_data_jittered = yakuno_data + np.random.normal(0, 1e-6, yakuno_data.shape)
 
+# t-SNE (座標計算)
 tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
 coords = tsne.fit_transform(yakuno_data_jittered)
 df_full['x'], df_full['y'] = coords[:, 0], coords[:, 1]
 
-# --- 6. マッチングと★の座標計算 ---
+# コサイン類似度
 similarities = cosine_similarity([patient_vec], yakuno_data.values)[0]
 df_full['一致度'] = similarities
 top_3 = df_full.sort_values('一致度', ascending=False).head(3)
 star_x, star_y = top_3['x'].mean(), top_3['y'].mean()
 
-# --- 7. 描画設定 ---
+# --- 6. 【ここがポイント！】推奨処方を地図の上に表示 ---
+st.subheader("🌟 推奨処方（マッチ度順）")
+cols = st.columns(3)
+for i, (idx, row) in enumerate(top_3.iterrows()):
+    with cols[i]:
+        st.metric(f"{i+1}. {row['formula']}", f"{row['一致度']:.1%}")
+
+st.write("---") # 視覚的な区切り線
+
+# --- 7. 地図の描画 ---
 fig = px.scatter(
     df_full, x='x', y='y', text='formula',
     color='一致度', color_continuous_scale='Viridis',
-    hover_name='formula', height=800
+    hover_name='formula', height=750
 )
 
 # 特大赤スター
@@ -129,20 +136,13 @@ fig.add_trace(go.Scatter(
 ))
 
 fig.update_traces(textposition='top center', marker=dict(size=12))
-
-# 【修正ポイント】 range をぐっと狭くしてズームイン状態で固定
 fig.update_layout(
     plot_bgcolor='white',
     xaxis=dict(visible=False, range=[star_x - zoom_scale, star_x + zoom_scale]),
     yaxis=dict(visible=False, range=[star_y - zoom_scale, star_y + zoom_scale]),
     showlegend=False,
-    uirevision='constant' 
+    uirevision='constant',
+    margin=dict(l=0, r=0, t=0, b=0) # 地図の余白を削って大きく表示
 )
 
 st.plotly_chart(fig, use_container_width=True)
-
-# 推薦処方
-st.subheader("🌟 推奨処方")
-cols = st.columns(3)
-for i, (idx, row) in enumerate(top_3.iterrows()):
-    cols[i].metric(f"{i+1}. {row['formula']}", f"{row['一致度']:.1%}")
