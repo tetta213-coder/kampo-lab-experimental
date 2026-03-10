@@ -18,7 +18,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌿 証空間の地図：特化型チューニング版")
+st.title("🌿 証空間の地図")
 
 @st.cache_data
 def load_data():
