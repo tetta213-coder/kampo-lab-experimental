@@ -24,32 +24,27 @@ st.title("🌿 証空間の地図：148処方の宇宙")
 # 2. データの読み込み
 @st.cache_data
 def load_data():
-    # ファイル読み込み
     df = pd.read_csv("kampo_yakuno_integrated.csv")
-    
-    # 【重要】No.1〜148（保険適用）に絞り込む
-    # これにより、右下の「謎の団子（未定義処方の群れ）」が大幅に解消されます。
+    # 保険適用148処方に絞り込み
     df = df[df['No'] <= 148].copy()
     return df
 
-# ここでグローバル変数として定義
 df_full = load_data()
 
-# --- 3. 薬能軸（24次元）の定義 ---
-# これを計算の前に定義しておかないと NameError になります
+# 薬能軸の定義
 yakuno_cols = [
     "補気", "理気", "降気", "補血", "駆瘀血", "止血", "利水", "潤水", "温", "清", 
     "安心鎮静", "認知知能", "鎮痙", "眼精疲労", "清頭目", "排膿", "解毒", "疣贅", 
     "制吐", "鎮嘔", "瀉下", "黄疸", "安胎", "通乳"
 ]
 
-# --- 4. サイドバー：入力インターフェース ---
+# --- 3. サイドバー：入力インターフェース ---
 st.sidebar.header("👤 患者の病態入力")
 
 sho_input = {}
 sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
 for name in sho_names:
-    sho_input[name] = st.sidebar.slider(f"{name}", 0.0, 1.0, 0.3)
+    sho_input[name] = st.sidebar.slider(f"{name}", 0.0, 1.0, 0.3, key=f"slider_{name}")
 
 st.sidebar.subheader("2. 特定の随伴症状")
 raw_input = {}
@@ -59,9 +54,9 @@ symptom_labels = [
     "制吐・鎮嘔", "瀉下 (便秘)", "黄疸", "安胎", "通乳"
 ]
 for label in symptom_labels:
-    raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True)
+    raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True, key=f"radio_{label}")
 
-# --- 5. 24次元患者ベクトルの生成ロジック ---
+# --- 4. 24次元患者ベクトルの生成ロジック ---
 def create_patient_vec(sho, raw):
     p = {k: 0.0 for k in yakuno_cols}
     p["補気"] = sho['気虚'] + (sho['腎虚'] * 0.3)
@@ -92,34 +87,49 @@ def create_patient_vec(sho, raw):
 
 patient_vec = create_patient_vec(sho_input, raw_input)
 
-# --- 6. 地図（証空間）の計算と団子対策 ---
-# 全く同じスコアの処方をバラけさせるために微小なノイズ（乱数）を加えます
+# --- 5. 地図の計算 ---
 yakuno_data = df_full[yakuno_cols].fillna(0)
+# 団子防止の微小ノイズ
 yakuno_data_jittered = yakuno_data + np.random.normal(0, 1e-6, yakuno_data.shape)
 
 tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
 coords = tsne.fit_transform(yakuno_data_jittered)
 df_full['x'], df_full['y'] = coords[:, 0], coords[:, 1]
 
-# --- 7. マッチングと★の計算 ---
+# --- 6. マッチングと★の描画 ---
 similarities = cosine_similarity([patient_vec], yakuno_data.values)[0]
 df_full['一致度'] = similarities
 top_3 = df_full.sort_values('一致度', ascending=False).head(3)
 star_x, star_y = top_3['x'].mean(), top_3['y'].mean()
 
-# --- 8. 描画 ---
 fig = px.scatter(
     df_full, x='x', y='y', text='formula',
     color='一致度', color_continuous_scale='Viridis',
     hover_name='formula', height=800
 )
+
+# 【修正ポイント】★マークを特大にし、白縁を太くして目立たせました
 fig.add_trace(go.Scatter(
     x=[star_x], y=[star_y], mode='markers+text',
-    marker=dict(symbol='star', size=25, color='red', line=dict(width=2, color='white')),
-    text=["★ あなたの現在地"], textposition="top center", name="現在の証"
+    marker=dict(
+        symbol='star', 
+        size=45,          # 25から45へ大幅アップ
+        color='red', 
+        line=dict(width=3, color='white') # 白縁を太く
+    ),
+    text=["★ あなたの現在地"], 
+    textposition="top center", 
+    textfont=dict(size=18, color='red', family="HiraKakuPro-W6"), # 文字も大きく赤く
+    name="現在の証"
 ))
+
 fig.update_traces(textposition='top center', marker=dict(size=12))
-fig.update_layout(plot_bgcolor='white', xaxis=dict(visible=False), yaxis=dict(visible=False))
+fig.update_layout(
+    plot_bgcolor='white', 
+    xaxis=dict(visible=False), 
+    yaxis=dict(visible=False),
+    showlegend=False # 凡例を消して地図を広く使う
+)
 
 st.plotly_chart(fig, use_container_width=True)
 
