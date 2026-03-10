@@ -42,9 +42,9 @@ st.sidebar.header("👤 患者の病態入力")
 # 年齢入力
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
 
-# 【追加】表示設定
+# 【修正】初期値を 15 にして、最初から近くに設定
 st.sidebar.subheader("🖼 マップ表示設定")
-zoom_scale = st.sidebar.slider("ズーム倍率 (小さいほど拡大)", 5, 100, 40, help="★を中心とした表示範囲の広さを調整します。")
+zoom_scale = st.sidebar.slider("ズーム倍率 (小さいほど拡大)", 5, 100, 15, key="zoom_slider", help="★を中心とした表示範囲の広さを調整します。")
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
 sho_input = {}
@@ -130,14 +130,13 @@ fig.add_trace(go.Scatter(
 
 fig.update_traces(textposition='top center', marker=dict(size=12))
 
-# 【最重要】現在地を中心としたズーム設定
-# xaxis と yaxis の range を現在地 ± ズームスケール に固定します
+# 【修正ポイント】 range をぐっと狭くしてズームイン状態で固定
 fig.update_layout(
     plot_bgcolor='white',
     xaxis=dict(visible=False, range=[star_x - zoom_scale, star_x + zoom_scale]),
     yaxis=dict(visible=False, range=[star_y - zoom_scale, star_y + zoom_scale]),
     showlegend=False,
-    uirevision='constant' # スライダーを動かしてもズーム状態を維持するための魔法の言葉
+    uirevision='constant' 
 )
 
 st.plotly_chart(fig, use_container_width=True)
