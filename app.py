@@ -19,22 +19,115 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌿 証空間の地図：患者と処方の出会い")
-st.write("スライダーを動かすと、あなたの証（ベクトル）が地図上の最適な処方へと吸い寄せられます。")
+st.title("🌿 証空間の地図：148処方の宇宙")
 
 # 2. データの読み込み
 @st.cache_data
 def load_data():
+    # ファイル読み込み
     df = pd.read_csv("kampo_yakuno_integrated.csv")
     
-    # 【追加】保険適用処方（No.1〜148）だけに絞り込む
-    # もし 148 という数字が先生のリストとズレている場合は、ここを調整してください
-    df = df[df['No'] <= 148]
-    
+    # 【重要】No.1〜148（保険適用）に絞り込む
+    # これにより、右下の「謎の団子（未定義処方の群れ）」が大幅に解消されます。
+    df = df[df['No'] <= 148].copy()
     return df
 
-# --- 5. 地図計算の直前に「ノイズ」を加える（団子対策） ---
-# 全く同じスコアの処方があると重なってしまうため、
+# ここでグローバル変数として定義
+df_full = load_data()
+
+# --- 3. 薬能軸（24次元）の定義 ---
+# これを計算の前に定義しておかないと NameError になります
+yakuno_cols = [
+    "補気", "理気", "降気", "補血", "駆瘀血", "止血", "利水", "潤水", "温", "清", 
+    "安心鎮静", "認知知能", "鎮痙", "眼精疲労", "清頭目", "排膿", "解毒", "疣贅", 
+    "制吐", "鎮嘔", "瀉下", "黄疸", "安胎", "通乳"
+]
+
+# --- 4. サイドバー：入力インターフェース ---
+st.sidebar.header("👤 患者の病態入力")
+
+sho_input = {}
+sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
+for name in sho_names:
+    sho_input[name] = st.sidebar.slider(f"{name}", 0.0, 1.0, 0.3)
+
+st.sidebar.subheader("2. 特定の随伴症状")
+raw_input = {}
+symptom_labels = [
+    "安心鎮静 (不眠・不安)", "認知知能 (物忘れ)", "鎮痙 (足のつり)", "眼精疲労", 
+    "清頭目 (のぼせ・頭痛)", "排膿 (にきび)", "解毒 (かゆみ)", "疣贅 (いぼ)", 
+    "制吐・鎮嘔", "瀉下 (便秘)", "黄疸", "安胎", "通乳"
+]
+for label in symptom_labels:
+    raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True)
+
+# --- 5. 24次元患者ベクトルの生成ロジック ---
+def create_patient_vec(sho, raw):
+    p = {k: 0.0 for k in yakuno_cols}
+    p["補気"] = sho['気虚'] + (sho['腎虚'] * 0.3)
+    p["理気"] = sho['気鬱']
+    p["降気"] = sho['気逆']
+    p["補血"] = sho['血虚'] + (sho['腎虚'] * 0.4)
+    p["駆瘀血"] = sho['瘀血']
+    p["利水"] = sho['水毒']
+    p["潤水"] = (sho['腎虚'] * 0.3)
+    p["温"] = sho['寒']
+    p["清"] = sho['熱']
+
+    mapping = {
+        "安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"],
+        "鎮痙 (足のつり)": ["鎮痙"], "眼精疲労": ["眼精疲労"],
+        "清頭目 (のぼせ・頭痛)": ["清頭目"], "排膿 (にきび)": ["排膿"],
+        "解毒 (かゆみ)": ["解毒"], "疣贅 (いぼ)": ["疣贅"],
+        "制吐・鎮嘔": ["制吐", "鎮嘔"], "瀉下 (便秘)": ["瀉下"],
+        "黄疸": ["黄疸"], "安胎": ["安胎"], "通乳": ["通乳"]
+    }
+    for label, target_keys in mapping.items():
+        if raw.get(label) == "あり":
+            for k in target_keys: p[k] = 0.8
+
+    if p["降気"] < 0.3 and sho['気鬱'] > 0.5 and sho['熱'] > 0.5:
+        p["降気"] = (sho['気鬱'] + sho['熱']) / 2
+    return np.array([p[k] for k in yakuno_cols])
+
+patient_vec = create_patient_vec(sho_input, raw_input)
+
+# --- 6. 地図（証空間）の計算と団子対策 ---
+# 全く同じスコアの処方をバラけさせるために微小なノイズ（乱数）を加えます
+yakuno_data = df_full[yakuno_cols].fillna(0)
+yakuno_data_jittered = yakuno_data + np.random.normal(0, 1e-6, yakuno_data.shape)
+
+tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
+coords = tsne.fit_transform(yakuno_data_jittered)
+df_full['x'], df_full['y'] = coords[:, 0], coords[:, 1]
+
+# --- 7. マッチングと★の計算 ---
+similarities = cosine_similarity([patient_vec], yakuno_data.values)[0]
+df_full['一致度'] = similarities
+top_3 = df_full.sort_values('一致度', ascending=False).head(3)
+star_x, star_y = top_3['x'].mean(), top_3['y'].mean()
+
+# --- 8. 描画 ---
+fig = px.scatter(
+    df_full, x='x', y='y', text='formula',
+    color='一致度', color_continuous_scale='Viridis',
+    hover_name='formula', height=800
+)
+fig.add_trace(go.Scatter(
+    x=[star_x], y=[star_y], mode='markers+text',
+    marker=dict(symbol='star', size=25, color='red', line=dict(width=2, color='white')),
+    text=["★ あなたの現在地"], textposition="top center", name="現在の証"
+))
+fig.update_traces(textposition='top center', marker=dict(size=12))
+fig.update_layout(plot_bgcolor='white', xaxis=dict(visible=False), yaxis=dict(visible=False))
+
+st.plotly_chart(fig, use_container_width=True)
+
+# 推薦処方
+st.subheader("🌟 推奨処方")
+cols = st.columns(3)
+for i, (idx, row) in enumerate(top_3.iterrows()):
+    cols[i].metric(f"{i+1}. {row['formula']}", f"{row['一致度']:.1%}")# 全く同じスコアの処方があると重なってしまうため、
 # 24次元の計算用データに極微小な乱数を加えて、地図上で少しだけバラけさせます。
 yakuno_data = df_full[yakuno_cols].fillna(0)
 
