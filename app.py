@@ -108,18 +108,18 @@ fig = px.scatter(
     hover_name='formula', height=800
 )
 
-# 【修正ポイント】★マークを特大にし、白縁を太くして目立たせました
+# 【修正ポイント】星を巨大化し、ラベルから星マークを削除
 fig.add_trace(go.Scatter(
     x=[star_x], y=[star_y], mode='markers+text',
     marker=dict(
         symbol='star', 
-        size=45,          # 25から45へ大幅アップ
+        size=70,          # 巨大化！
         color='red', 
-        line=dict(width=3, color='white') # 白縁を太く
+        line=dict(width=4, color='gold') # 枠をゴールドにしてさらに強調
     ),
-    text=["★ あなたの現在地"], 
+    text=["あなたの現在地"], # ラベルから★を削除
     textposition="top center", 
-    textfont=dict(size=18, color='red', family="HiraKakuPro-W6"), # 文字も大きく赤く
+    textfont=dict(size=22, color='red', family="HiraKakuPro-W6"), # 文字もより大きく
     name="現在の証"
 ))
 
@@ -128,7 +128,7 @@ fig.update_layout(
     plot_bgcolor='white', 
     xaxis=dict(visible=False), 
     yaxis=dict(visible=False),
-    showlegend=False # 凡例を消して地図を広く使う
+    showlegend=False 
 )
 
 st.plotly_chart(fig, use_container_width=True)
