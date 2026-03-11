@@ -19,7 +19,7 @@ st.markdown("""
 
 st.title("🌿 証空間の地図")
 
-# --- 2. 固定パラメータの設定 ---
+# --- 2. 固定パラメータ（黄金比） ---
 SENSITIVITY = 250.0
 ZOOM_SCALE = 4.0
 
@@ -37,9 +37,15 @@ def load_base_data():
 
 df_base, yakuno_cols = load_base_data()
 
-# --- 4. サイドバー：患者入力 ---
+# --- 4. サイドバー：入力とエンジン選択 ---
 st.sidebar.header("👤 患者の病態入力")
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
+
+# エンジン選択のみ復活
+engine = st.sidebar.selectbox(
+    "計算エンジン",
+    ["幾何学的射影 (地図固定)", "149番目として全計算 (地図動的)"]
+)
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
 defaults = {
@@ -85,49 +91,54 @@ yakuno_data_raw = df_base[yakuno_cols].fillna(0).values
 yakuno_norms = np.linalg.norm(yakuno_data_raw, axis=1, keepdims=True)
 yakuno_data_norm = np.divide(yakuno_data_raw, yakuno_norms, out=np.zeros_like(yakuno_data_raw), where=yakuno_norms!=0)
 
-@st.cache_data
-def get_fixed_coords(data):
+if engine == "幾何学的射影 (地図固定)":
+    @st.cache_data
+    def get_fixed_coords(data):
+        tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
+        return tsne.fit_transform(data)
+    coords = get_fixed_coords(yakuno_data_raw)
+    df_base['x'], df_base['y'] = coords[:, 0], coords[:, 1]
+    dists = euclidean_distances([patient_vec], yakuno_data_norm)[0]
+    near_indices = dists.argsort()[:3]
+    near_dists = dists[near_indices]
+    near_coords = coords[near_indices]
+    d_min = near_dists.min()
+    weights = np.exp(-SENSITIVITY * (near_dists - d_min) / (near_dists.max() - d_min + 1e-9))
+    star_x = (near_coords[:, 0] * weights).sum() / weights.sum()
+    star_y = (near_coords[:, 1] * weights).sum() / weights.sum()
+    df_calc = df_base.copy()
+else:
+    # 149番目として全計算モード
+    full_data = np.vstack([yakuno_data_raw, patient_vec * 10]) 
     tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
-    return tsne.fit_transform(data)
+    full_coords = tsne.fit_transform(full_data)
+    df_calc = df_base.copy()
+    df_calc['x'], df_calc['y'] = full_coords[:-1, 0], full_coords[:-1, 1]
+    star_x, star_y = full_coords[-1, 0], full_coords[-1, 1]
 
-coords = get_fixed_coords(yakuno_data_raw)
-df_base['x'], df_base['y'] = coords[:, 0], coords[:, 1]
-
-dists = euclidean_distances([patient_vec], yakuno_data_norm)[0]
-near_indices = dists.argsort()[:3]
-near_dists = dists[near_indices]
-near_coords = coords[near_indices]
-d_min = near_dists.min()
-weights = np.exp(-SENSITIVITY * (near_dists - d_min) / (near_dists.max() - d_min + 1e-9))
-star_x = (near_coords[:, 0] * weights).sum() / weights.sum()
-star_y = (near_coords[:, 1] * weights).sum() / weights.sum()
-
-# --- 6. 推奨ランキング表示（並列レイアウト） ---
-df_base['cos_sim'] = cosine_similarity([patient_vec], yakuno_data_norm)[0]
-df_base['dist_2d'] = np.sqrt((df_base['x'] - star_x)**2 + (df_base['y'] - star_y)**2)
-df_base['prox_2d'] = (1 - (df_base['dist_2d'] / (df_base['dist_2d'].max() + 1e-9)))
+# --- 6. ランキング表示 ---
+df_calc['cos_sim'] = cosine_similarity([patient_vec], yakuno_data_norm)[0]
+df_calc['dist_2d'] = np.sqrt((df_calc['x'] - star_x)**2 + (df_calc['y'] - star_y)**2)
+df_calc['prox_2d'] = (1 - (df_calc['dist_2d'] / (df_calc['dist_2d'].max() + 1e-9)))
 
 st.subheader("🌟 推奨処方")
-col_main_left, col_main_right = st.columns(2)
-
-with col_main_left:
+c_left, c_right = st.columns(2)
+with c_left:
     st.write("**24次元でのコサイン類似度**")
-    top_cos = df_base.sort_values('cos_sim', ascending=False).head(3)
-    sub_cols = st.columns(3)
+    top_cos = df_calc.sort_values('cos_sim', ascending=False).head(3)
+    cols = st.columns(3)
     for i, (idx, row) in enumerate(top_cos.iterrows()):
-        sub_cols[i].metric(f"{i+1}. {row['formula']}", f"{row['cos_sim']:.1%}")
-
-with col_main_right:
+        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['cos_sim']:.1%}")
+with c_right:
     st.write("**2D地図上の近接 (位置)**")
-    top_dist = df_base.sort_values('dist_2d', ascending=True).head(3)
-    sub_cols = st.columns(3)
+    top_dist = df_calc.sort_values('dist_2d', ascending=True).head(3)
+    cols = st.columns(3)
     for i, (idx, row) in enumerate(top_dist.iterrows()):
-        sub_cols[i].metric(f"{i+1}. {row['formula']}", f"{row['prox_2d']:.1%}")
+        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['prox_2d']:.1%}")
 
 st.write("---")
 
-# 地図描画
-fig = px.scatter(df_base, x='x', y='y', text='formula', color='cos_sim', color_continuous_scale='Viridis', hover_name='formula', height=800)
+fig = px.scatter(df_calc, x='x', y='y', text='formula', color='cos_sim', color_continuous_scale='Viridis', hover_name='formula', height=800)
 fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', marker=dict(symbol='star', size=80, color='red', line=dict(width=3, color='black')), text=["149: 患者"], textposition="top center", textfont=dict(size=22, color='red', family="HiraKakuPro-W6")))
 fig.update_traces(textposition='top center', marker=dict(size=12))
 fig.update_layout(plot_bgcolor='white', xaxis=dict(visible=False, range=[star_x - ZOOM_SCALE, star_x + ZOOM_SCALE]), yaxis=dict(visible=False, range=[star_y - ZOOM_SCALE, star_y + ZOOM_SCALE]), showlegend=False, uirevision='constant', margin=dict(l=10, r=10, t=10, b=10))
