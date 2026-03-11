@@ -16,7 +16,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌿 証空間の地図：デュアル・メトリクス・エディション")
+st.title("🌿 証空間の地図：高感度・幾何学射影版")
 
 # --- 2. データの読み込み ---
 @st.cache_data
@@ -39,11 +39,12 @@ engine = st.sidebar.selectbox(
     ["幾何学的射影 (地図固定)", "149番目として全計算 (地図動的)"]
 )
 
+# 【新設】星の動きのキレを調整する隠しパラメータ
+sensitivity = st.sidebar.slider("星の移動感度 (幾何学)", 1.0, 50.0, 20.0)
+
 st.sidebar.header("👤 患者の病態入力")
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
-
-# 【ここを 10 に修正！】初期値を小さくして最初から寄った状態にします
-zoom_scale = st.sidebar.slider("表示範囲", 5, 100, 10)
+zoom_scale = st.sidebar.slider("表示範囲", 5, 100, 10) # デフォルトを10に
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
 defaults = {
@@ -94,9 +95,14 @@ if engine == "幾何学的射影 (地図固定)":
         return tsne.fit_transform(data + np.random.normal(0, 1e-6, data.shape))
     coords = get_fixed_coords(yakuno_data)
     df_base['x'], df_base['y'] = coords[:, 0], coords[:, 1]
+    
+    # --- 【改善版】ユークリッド距離に基づく高感度プロット ---
     dists = euclidean_distances([patient_vec], yakuno_data)[0]
-    sigma = np.percentile(dists, 10) + 1e-9
-    geo_weights = np.exp(- (dists**2) / (2 * sigma**2))
+    # 距離が近いものほど「超強力」に引き寄せる重み付け (Softmax的アプローチ)
+    # sensitivity を上げるほど、1位の処方に吸い寄せられます
+    d_min = dists.min()
+    geo_weights = np.exp(-sensitivity * (dists - d_min) / (dists.std() + 1e-9))
+    
     star_x = (df_base['x'] * geo_weights).sum() / geo_weights.sum()
     star_y = (df_base['y'] * geo_weights).sum() / geo_weights.sum()
     df_calc = df_base.copy()
@@ -115,20 +121,20 @@ max_d = df_calc['dist_2d'].max()
 df_calc['prox_2d'] = (1 - (df_calc['dist_2d'] / (max_d + 1e-9)))
 
 # --- 7. UI表示 ---
-st.subheader("🌟 推奨処方ランキング（比較表示）")
+st.subheader("🌟 推奨処方ランキング")
 tab_cos, tab_dist = st.tabs(["24Dパターンの合致 (Cosine Sim)", "2D地図上の近接度 (Euclidean Dist)"])
 
 with tab_cos:
     top_cos = df_calc.sort_values('cos_sim', ascending=False).head(3)
     cols = st.columns(3)
     for i, (idx, row) in enumerate(top_cos.iterrows()):
-        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['cos_sim']:.1%}", "Cosine Similarity")
+        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['cos_sim']:.1%}")
 
 with tab_dist:
     top_dist = df_calc.sort_values('dist_2d', ascending=True).head(3)
     cols = st.columns(3)
     for i, (idx, row) in enumerate(top_dist.iterrows()):
-        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['prox_2d']:.1%}", f"Dist: {row['dist_2d']:.2f}")
+        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['prox_2d']:.1%}")
 
 st.write("---")
 
