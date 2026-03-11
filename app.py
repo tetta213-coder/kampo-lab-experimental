@@ -20,11 +20,11 @@ st.markdown("""
 
 st.title("🌿 証空間の地図")
 
-# --- 2. 固定パラメータ（黄金比） ---
+# --- 2. 固定パラメータ（吉野先生の黄金比） ---
 SENSITIVITY = 250.0
 ZOOM_SCALE = 4.0
 
-# --- 3. データの読み込み ---
+# --- 3. データの読み込みと正規化 ---
 @st.cache_data
 def load_and_normalize_data():
     df = pd.read_csv("kampo_yakuno_integrated.csv")
@@ -35,7 +35,7 @@ def load_and_normalize_data():
         "制吐", "鎮嘔", "瀉下", "黄疸", "安胎", "通乳"
     ]
     raw_values = df[yakuno_cols].fillna(0).values
-    # 地図の骨格は正規化データで作る
+    # すべての処方を単位ベクトルに正規化（重力格差の是正）
     normalized_values = normalize(raw_values, norm='l2')
     return df, yakuno_cols, raw_values, normalized_values
 
@@ -46,13 +46,12 @@ st.sidebar.header("👤 患者の病態入力")
 sex = st.sidebar.radio("性別", ["男性", "女性"], index=1, horizontal=True)
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
 
-# 研究用エンジン選択
+# 計算エンジンの選択
 engine = st.sidebar.selectbox("計算エンジン", ["幾何学的射影 (地図固定)", "149番目として全計算 (地図動的)"])
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
 
-# 【改善】デフォルト値を0.1に引き下げ（背景ノイズの除去）
-# 寒熱・虚実のみ、中庸を示す0.5を維持
+# 【設定】デフォルト値を0.1に引き下げ（虚実・寒熱は0.5の中庸を維持）
 defaults = {
     '虚実': 0.5, '寒': 0.5, '熱': 0.5,
     '気虚': 0.1, '気鬱': 0.1, '気逆': 0.1,
@@ -73,11 +72,11 @@ for label in symptom_labels:
 
 # --- 5. 計算ロジック ---
 def create_patient_vec(sho, raw, age, sex):
-    # ベースのノイズ床をさらに下げる
+    # 背景ノイズを0.001まで極小化
     p = {k: 0.001 for k in yakuno_cols} 
     kyo, jitsu = max(0, 0.5-sho['虚実'])*2.0, max(0, sho['虚実']-0.5)*2.0
     
-    # 選択された指標の立ち上がりを鋭くする
+    # 指標の立ち上がり
     p["補気"] += (sho['気虚']*3.0) + (kyo*0.5)
     p["補血"] += (sho['血虚']*3.0) + (kyo*0.5)
     p["利水"] += (sho['水毒']*3.0)
@@ -98,7 +97,7 @@ def create_patient_vec(sho, raw, age, sex):
         if raw.get(label) == "あり":
             for k in target_keys: p[k] = 5.0
 
-    # 累乗による「シグモイド的」なシャープ化
+    # 累乗によるシャープ化（シグモイド的な立ち上がり）
     vec = np.array([p[k]**2 for k in yakuno_cols])
     norm = np.linalg.norm(vec)
     return vec / norm if norm > 0 else vec
@@ -124,14 +123,15 @@ if engine == "幾何学的射影 (地図固定)":
     star_y = (near_coords[:, 1] * weights).sum() / weights.sum()
     df_calc = df_base.copy()
 else:
+    # --- 【修正済み】全計算モード ---
     full_data = np.vstack([yakuno_data_norm, patient_vec]) 
-    tsne = TSNE(tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
+    tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
     full_coords = tsne.fit_transform(full_data)
     df_calc = df_base.copy()
     df_calc['x'], df_calc['y'] = full_coords[:-1, 0], full_coords[:-1, 1]
     star_x, star_y = full_coords[-1, 0], full_coords[-1, 1]
 
-# --- 6. ランキング表示 ---
+# --- 6. ランキング表示（デュアル・並列） ---
 df_calc['cos_sim'] = cosine_similarity([patient_vec], yakuno_data_norm)[0]
 df_calc['dist_2d'] = np.sqrt((df_calc['x'] - star_x)**2 + (df_calc['y'] - star_y)**2)
 df_calc['prox_2d'] = (1 - (df_calc['dist_2d'] / (df_calc['dist_2d'].max() + 1e-9)))
