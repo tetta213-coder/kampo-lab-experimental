@@ -41,19 +41,15 @@ engine = st.sidebar.selectbox(
 
 st.sidebar.header("👤 患者の病態入力")
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
-zoom_scale = st.sidebar.slider("表示範囲", 5, 100, 20)
+
+# 【ここを 10 に修正！】初期値を小さくして最初から寄った状態にします
+zoom_scale = st.sidebar.slider("表示範囲", 5, 100, 10)
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
-
-# 【修正】吉野先生指定の新しいデフォルト値
 defaults = {
-    '虚実': 0.5,
-    '寒': 0.5,
-    '熱': 0.5,
-    '気虚': 0.3,
-    '血虚': 0.3,
-    '水毒': 0.3,
-    '腎虚': 0.3
+    '虚実': 0.5, '寒': 0.5, '熱': 0.5,
+    '気虚': 0.3, '気鬱': 0.3, '気逆': 0.3,
+    '血虚': 0.3, '瘀血': 0.3, '水毒': 0.3, '腎虚': 0.3
 }
 
 sho_input = {}
@@ -72,7 +68,6 @@ for label in symptom_labels:
 def create_patient_vec(sho, raw, age):
     p = {k: 0.05 for k in yakuno_cols} 
     kyo, jitsu = max(0, 0.5-sho['虚実'])*2.0, max(0, sho['虚実']-0.5)*2.0
-    
     p["補気"] += (sho['気虚']*1.5) + (kyo*0.3)
     p["補血"] += (sho['血虚']*1.5) + (kyo*0.3)
     p["利水"] += (sho['水毒']*1.5)
@@ -80,10 +75,8 @@ def create_patient_vec(sho, raw, age):
     p["駆瘀血"] += (sho['瘀血']*1.5) + (jitsu*0.3)
     p["瀉下"] += (jitsu*0.5)
     p["理気"] += sho['気鬱']*1.5; p["降気"] += sho['気逆']*1.5; p["温"] += sho['寒']*1.5; p["清"] += sho['熱']*1.5
-    
     jk = min(1.0, sho['腎虚'] + max(0, (age-40)*0.02))
     p["補気"] += jk*0.5; p["補血"] += jk*0.5; p["潤水"] += jk*0.8; p["利水"] += jk*0.4
-    
     mapping = {"安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"], "鎮痙 (足のつり)": ["鎮痙"], "眼精疲労": ["眼精疲労"], "清頭目 (のぼせ・頭痛)": ["清頭目"], "排膿 (にきび)": ["排膿"], "解毒 (かゆみ)": ["解毒"], "疣贅 (いぼ)": ["疣贅"], "制吐・鎮嘔": ["制吐", "鎮嘔"], "瀉下 (便秘)": ["瀉下"], "黄疸": ["黄疸"], "安胎": ["安胎"], "通乳": ["通乳"]}
     for label, target_keys in mapping.items():
         if raw.get(label) == "あり":
