@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from sklearn.manifold import TSNE
 from sklearn.metrics.pairwise import cosine_similarity, euclidean_distances
+from sklearn.preprocessing import normalize
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -23,9 +24,9 @@ st.title("🌿 証空間の地図")
 SENSITIVITY = 250.0
 ZOOM_SCALE = 4.0
 
-# --- 3. データの読み込み ---
+# --- 3. データの読み込みと正規化 ---
 @st.cache_data
-def load_base_data():
+def load_and_normalize_data():
     df = pd.read_csv("kampo_yakuno_integrated.csv")
     df = df[df['No'] <= 148].copy()
     yakuno_cols = [
@@ -33,33 +34,24 @@ def load_base_data():
         "安心鎮静", "認知知能", "鎮痙", "眼精疲労", "清頭目", "排膿", "解毒", "疣贅", 
         "制吐", "鎮嘔", "瀉下", "黄疸", "安胎", "通乳"
     ]
-    return df, yakuno_cols
+    raw_values = df[yakuno_cols].fillna(0).values
+    # 【核心】地図を生成する前に、すべての処方を正規化する
+    normalized_values = normalize(raw_values, norm='l2')
+    return df, yakuno_cols, raw_values, normalized_values
 
-df_base, yakuno_cols = load_base_data()
+df_base, yakuno_cols, yakuno_data_raw, yakuno_data_norm = load_and_normalize_data()
 
 # --- 4. サイドバー：患者入力 ---
 st.sidebar.header("👤 患者の病態入力")
-
-# 【新設】性別の選択
 sex = st.sidebar.radio("性別", ["男性", "女性"], index=1, horizontal=True)
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
 
-# エンジン選択
-engine = st.sidebar.selectbox(
-    "計算エンジン",
-    ["幾何学的射影 (地図固定)", "149番目として全計算 (地図動的)"]
-)
+engine = st.sidebar.selectbox("計算エンジン", ["幾何学的射影 (地図固定)", "149番目として全計算 (地図動的)"])
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
-defaults = {
-    '虚実': 0.5, '寒': 0.5, '熱': 0.5,
-    '気虚': 0.3, '気鬱': 0.3, '気逆': 0.3,
-    '血虚': 0.3, '瘀血': 0.3, '水毒': 0.3, '腎虚': 0.3
-}
-
+defaults = {'虚実': 0.5, '寒': 0.5, '熱': 0.5, '気虚': 0.3, '気鬱': 0.3, '気逆': 0.3, '血虚': 0.3, '瘀血': 0.3, '水毒': 0.3, '腎虚': 0.3}
 sho_input = {}
-sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
-for name in sho_names:
+for name in ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']:
     label_text = "虚実 (0:虚 ←→ 1:実)" if name == '虚実' else name
     sho_input[name] = st.sidebar.slider(label_text, 0.0, 1.0, defaults.get(name, 0.0), key=f"slider_{name}")
 
@@ -73,47 +65,39 @@ for label in symptom_labels:
 def create_patient_vec(sho, raw, age, sex):
     p = {k: 0.01 for k in yakuno_cols} 
     kyo, jitsu = max(0, 0.5-sho['虚実'])*2.0, max(0, sho['虚実']-0.5)*2.0
-    
-    # 臨床的重みの強化
     p["補気"] += (sho['気虚']*3.0) + (kyo*0.5)
     p["補血"] += (sho['血虚']*3.0) + (kyo*0.5)
     p["利水"] += (sho['水毒']*3.0)
     p["駆瘀血"] += (sho['瘀血']*3.0) + (jitsu*0.5)
     p["理気"] += sho['気鬱']*3.0; p["降気"] += sho['気逆']*3.0
     p["温"] += sho['寒']*3.0; p["清"] += sho['熱']*3.0
-    
-    # 性別による生理的特性の補正（女性は血の影響を強く受ける）
     if sex == "女性":
-        p["補血"] += 0.2
-        p["駆瘀血"] += 0.2
-        # 女性特有の薬能スコアを有効化
+        p["補血"] += 0.2; p["駆瘀血"] += 0.2
         if raw.get("安胎") == "あり": p["安胎"] = 5.0
         if raw.get("通乳") == "あり": p["通乳"] = 5.0
-
     jk = min(1.0, sho['腎虚'] + max(0, (age-40)*0.02))
     p["補気"] += jk; p["補血"] += jk; p["潤水"] += jk; p["利水"] += jk
-
     mapping = {"安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"], "鎮痙 (足のつり)": ["鎮痙"], "眼精疲労": ["眼精疲労"], "清頭目 (のぼせ・頭痛)": ["清頭目"], "排膿 (にきび)": ["排膿"], "解毒 (かゆみ)": ["解毒"], "疣贅 (いぼ)": ["疣贅"], "制吐・鎮嘔": ["制吐", "鎮嘔"], "瀉下 (便秘)": ["瀉下"], "黄疸": ["黄疸"]}
     for label, target_keys in mapping.items():
         if raw.get(label) == "あり":
             for k in target_keys: p[k] = 5.0
-
     vec = np.array([p[k] for k in yakuno_cols])
     norm = np.linalg.norm(vec)
     return vec / norm if norm > 0 else vec
 
 patient_vec = create_patient_vec(sho_input, raw_input, age, sex)
-yakuno_data_raw = df_base[yakuno_cols].fillna(0).values
-yakuno_norms = np.linalg.norm(yakuno_data_raw, axis=1, keepdims=True)
-yakuno_data_norm = np.divide(yakuno_data_raw, yakuno_norms, out=np.zeros_like(yakuno_data_raw), where=yakuno_norms!=0)
+
+# 座標の計算
+@st.cache_data
+def get_fixed_coords(norm_data):
+    # 【核心】正規化されたデータに基づいて地図の「骨格」を作る
+    tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
+    return tsne.fit_transform(norm_data)
+
+coords = get_fixed_coords(yakuno_data_norm)
+df_base['x'], df_base['y'] = coords[:, 0], coords[:, 1]
 
 if engine == "幾何学的射影 (地図固定)":
-    @st.cache_data
-    def get_fixed_coords(data):
-        tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
-        return tsne.fit_transform(data)
-    coords = get_fixed_coords(yakuno_data_raw)
-    df_base['x'], df_base['y'] = coords[:, 0], coords[:, 1]
     dists = euclidean_distances([patient_vec], yakuno_data_norm)[0]
     near_indices = dists.argsort()[:3]
     near_dists = dists[near_indices]
@@ -124,7 +108,7 @@ if engine == "幾何学的射影 (地図固定)":
     star_y = (near_coords[:, 1] * weights).sum() / weights.sum()
     df_calc = df_base.copy()
 else:
-    full_data = np.vstack([yakuno_data_raw, patient_vec * 10]) 
+    full_data = np.vstack([yakuno_data_norm, patient_vec]) 
     tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
     full_coords = tsne.fit_transform(full_data)
     df_calc = df_base.copy()
