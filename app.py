@@ -44,10 +44,23 @@ age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, val
 zoom_scale = st.sidebar.slider("表示範囲", 5, 100, 20)
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
-defaults = {'虚実': 0.5, '気虚': 0.2, '血虚': 0.2, '水毒': 0.2}
+
+# 【修正】吉野先生指定の新しいデフォルト値
+defaults = {
+    '虚実': 0.5,
+    '寒': 0.5,
+    '熱': 0.5,
+    '気虚': 0.3,
+    '血虚': 0.3,
+    '水毒': 0.3,
+    '腎虚': 0.3
+}
+
 sho_input = {}
-for name in ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']:
-    sho_input[name] = st.sidebar.slider(f"{name}", 0.0, 1.0, defaults.get(name, 0.0), key=f"slider_{name}")
+sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
+for name in sho_names:
+    val = defaults.get(name, 0.0)
+    sho_input[name] = st.sidebar.slider(f"{name}", 0.0, 1.0, val, key=f"slider_{name}")
 
 st.sidebar.subheader("2. 特定の随伴症状")
 raw_input = {}
@@ -59,6 +72,7 @@ for label in symptom_labels:
 def create_patient_vec(sho, raw, age):
     p = {k: 0.05 for k in yakuno_cols} 
     kyo, jitsu = max(0, 0.5-sho['虚実'])*2.0, max(0, sho['虚実']-0.5)*2.0
+    
     p["補気"] += (sho['気虚']*1.5) + (kyo*0.3)
     p["補血"] += (sho['血虚']*1.5) + (kyo*0.3)
     p["利水"] += (sho['水毒']*1.5)
@@ -66,8 +80,10 @@ def create_patient_vec(sho, raw, age):
     p["駆瘀血"] += (sho['瘀血']*1.5) + (jitsu*0.3)
     p["瀉下"] += (jitsu*0.5)
     p["理気"] += sho['気鬱']*1.5; p["降気"] += sho['気逆']*1.5; p["温"] += sho['寒']*1.5; p["清"] += sho['熱']*1.5
+    
     jk = min(1.0, sho['腎虚'] + max(0, (age-40)*0.02))
     p["補気"] += jk*0.5; p["補血"] += jk*0.5; p["潤水"] += jk*0.8; p["利水"] += jk*0.4
+    
     mapping = {"安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"], "鎮痙 (足のつり)": ["鎮痙"], "眼精疲労": ["眼精疲労"], "清頭目 (のぼせ・頭痛)": ["清頭目"], "排膿 (にきび)": ["排膿"], "解毒 (かゆみ)": ["解毒"], "疣贅 (いぼ)": ["疣贅"], "制吐・鎮嘔": ["制吐", "鎮嘔"], "瀉下 (便秘)": ["瀉下"], "黄疸": ["黄疸"], "安胎": ["安胎"], "通乳": ["通乳"]}
     for label, target_keys in mapping.items():
         if raw.get(label) == "あり":
@@ -99,16 +115,13 @@ else:
     df_calc['x'], df_calc['y'] = full_coords[:-1, 0], full_coords[:-1, 1]
     star_x, star_y = full_coords[-1, 0], full_coords[-1, 1]
 
-# --- 6. ランキング計算（デュアル） ---
-# A. 24Dコサイン類似度（パターンの合致）
+# --- 6. ランキング計算 ---
 df_calc['cos_sim'] = cosine_similarity([patient_vec], yakuno_data)[0]
-# B. 2Dユークリッド距離（地図上の物理的距離）
 df_calc['dist_2d'] = np.sqrt((df_calc['x'] - star_x)**2 + (df_calc['y'] - star_y)**2)
-# 距離を「近接度(%)」に変換（相対表示）
 max_d = df_calc['dist_2d'].max()
 df_calc['prox_2d'] = (1 - (df_calc['dist_2d'] / (max_d + 1e-9)))
 
-# --- 7. 推奨処方表示 ---
+# --- 7. UI表示 ---
 st.subheader("🌟 推奨処方ランキング（比較表示）")
 tab_cos, tab_dist = st.tabs(["24Dパターンの合致 (Cosine Sim)", "2D地図上の近接度 (Euclidean Dist)"])
 
@@ -122,12 +135,10 @@ with tab_dist:
     top_dist = df_calc.sort_values('dist_2d', ascending=True).head(3)
     cols = st.columns(3)
     for i, (idx, row) in enumerate(top_dist.iterrows()):
-        # 距離そのものではなく、視覚的な納得感のために「近接度」を表示
         cols[i].metric(f"{i+1}. {row['formula']}", f"{row['prox_2d']:.1%}", f"Dist: {row['dist_2d']:.2f}")
 
 st.write("---")
 
-# 地図描画
 sim_min, sim_max = df_calc['cos_sim'].min(), df_calc['cos_sim'].max()
 df_calc['表示色'] = (df_calc['cos_sim'] - sim_min) / (sim_max - sim_min + 1e-9)
 
