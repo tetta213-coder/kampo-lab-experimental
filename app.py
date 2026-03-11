@@ -13,16 +13,15 @@ st.markdown("""
     <style>
     .stApp { background-color: white !important; color: #31333F !important; }
     .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp label, .stApp span { color: #31333F !important; }
-    [data-testid="stMetricValue"] { font-size: 1.8rem !important; color: #1f77b4 !important; }
+    [data-testid="stMetricValue"] { font-size: 1.6rem !important; color: #1f77b4 !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# タイトルをシンプルに変更
 st.title("🌿 証空間の地図")
 
 # --- 2. 固定パラメータの設定 ---
-SENSITIVITY = 250.0  # 重力脱出感度
-ZOOM_SCALE = 4.0     # 表示範囲
+SENSITIVITY = 250.0
+ZOOM_SCALE = 4.0
 
 # --- 3. データの読み込み ---
 @st.cache_data
@@ -43,7 +42,6 @@ st.sidebar.header("👤 患者の病態入力")
 age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
 
 st.sidebar.subheader("1. 基本の10指標 (証)")
-# 吉野先生指定の臨床的デフォルト値（全項目0.3〜0.5）
 defaults = {
     '虚実': 0.5, '寒': 0.5, '熱': 0.5,
     '気虚': 0.3, '気鬱': 0.3, '気逆': 0.3,
@@ -66,28 +64,23 @@ for label in symptom_labels:
 def create_patient_vec(sho, raw, age):
     p = {k: 0.01 for k in yakuno_cols} 
     kyo, jitsu = max(0, 0.5-sho['虚実'])*2.0, max(0, sho['虚実']-0.5)*2.0
-    
     p["補気"] += (sho['気虚']*3.0) + (kyo*0.5)
     p["補血"] += (sho['血虚']*3.0) + (kyo*0.5)
     p["利水"] += (sho['水毒']*3.0)
     p["駆瘀血"] += (sho['瘀血']*3.0) + (jitsu*0.5)
     p["理気"] += sho['気鬱']*3.0; p["降気"] += sho['気逆']*3.0
     p["温"] += sho['寒']*3.0; p["清"] += sho['熱']*3.0
-    
     jk = min(1.0, sho['腎虚'] + max(0, (age-40)*0.02))
     p["補気"] += jk; p["補血"] += jk; p["潤水"] += jk; p["利水"] += jk
-
     mapping = {"安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"], "鎮痙 (足のつり)": ["鎮痙"], "眼精疲労": ["眼精疲労"], "清頭目 (のぼせ・頭痛)": ["清頭目"], "排膿 (にきび)": ["排膿"], "解毒 (かゆみ)": ["解毒"], "疣贅 (いぼ)": ["疣贅"], "制吐・鎮嘔": ["制吐", "鎮嘔"], "瀉下 (便秘)": ["瀉下"], "黄疸": ["黄疸"], "安胎": ["安胎"], "通乳": ["通乳"]}
     for label, target_keys in mapping.items():
         if raw.get(label) == "あり":
             for k in target_keys: p[k] = 5.0
-
     vec = np.array([p[k] for k in yakuno_cols])
     norm = np.linalg.norm(vec)
     return vec / norm if norm > 0 else vec
 
 patient_vec = create_patient_vec(sho_input, raw_input, age)
-
 yakuno_data_raw = df_base[yakuno_cols].fillna(0).values
 yakuno_norms = np.linalg.norm(yakuno_data_raw, axis=1, keepdims=True)
 yakuno_data_norm = np.divide(yakuno_data_raw, yakuno_norms, out=np.zeros_like(yakuno_data_raw), where=yakuno_norms!=0)
@@ -104,36 +97,36 @@ dists = euclidean_distances([patient_vec], yakuno_data_norm)[0]
 near_indices = dists.argsort()[:3]
 near_dists = dists[near_indices]
 near_coords = coords[near_indices]
-
 d_min = near_dists.min()
 weights = np.exp(-SENSITIVITY * (near_dists - d_min) / (near_dists.max() - d_min + 1e-9))
-
 star_x = (near_coords[:, 0] * weights).sum() / weights.sum()
 star_y = (near_coords[:, 1] * weights).sum() / weights.sum()
 
-# --- 6. 推奨ランキング表示 ---
+# --- 6. 推奨ランキング表示（並列レイアウト） ---
 df_base['cos_sim'] = cosine_similarity([patient_vec], yakuno_data_norm)[0]
 df_base['dist_2d'] = np.sqrt((df_base['x'] - star_x)**2 + (df_base['y'] - star_y)**2)
 df_base['prox_2d'] = (1 - (df_base['dist_2d'] / (df_base['dist_2d'].max() + 1e-9)))
 
 st.subheader("🌟 推奨処方")
-# ラベルを「24次元でのコサイン類似度」に変更
-t1, t2 = st.tabs(["24次元でのコサイン類似度", "2D地図上の近接 (位置)"])
+col_main_left, col_main_right = st.columns(2)
 
-with t1:
+with col_main_left:
+    st.write("**24次元でのコサイン類似度**")
     top_cos = df_base.sort_values('cos_sim', ascending=False).head(3)
-    cols = st.columns(3)
+    sub_cols = st.columns(3)
     for i, (idx, row) in enumerate(top_cos.iterrows()):
-        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['cos_sim']:.1%}")
+        sub_cols[i].metric(f"{i+1}. {row['formula']}", f"{row['cos_sim']:.1%}")
 
-with t2:
+with col_main_right:
+    st.write("**2D地図上の近接 (位置)**")
     top_dist = df_base.sort_values('dist_2d', ascending=True).head(3)
-    cols = st.columns(3)
+    sub_cols = st.columns(3)
     for i, (idx, row) in enumerate(top_dist.iterrows()):
-        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['prox_2d']:.1%}")
+        sub_cols[i].metric(f"{i+1}. {row['formula']}", f"{row['prox_2d']:.1%}")
 
 st.write("---")
 
+# 地図描画
 fig = px.scatter(df_base, x='x', y='y', text='formula', color='cos_sim', color_continuous_scale='Viridis', hover_name='formula', height=800)
 fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', marker=dict(symbol='star', size=80, color='red', line=dict(width=3, color='black')), text=["149: 患者"], textposition="top center", textfont=dict(size=22, color='red', family="HiraKakuPro-W6")))
 fig.update_traces(textposition='top center', marker=dict(size=12))
