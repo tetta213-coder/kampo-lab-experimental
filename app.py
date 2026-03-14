@@ -57,7 +57,7 @@ st.sidebar.subheader("1. 証の10指標")
 sho_input = {}
 sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
 for name in sho_names:
-    default_val = 0.5 if name in ['虚実', '寒', '熱'] else 0.1
+    default_val = 0.5 if name in ['虚実', '寒'] else 0.1
     sho_input[name] = st.sidebar.slider(name, 0.0, 1.0, default_val, key=f"slider_{name}")
 
 st.sidebar.subheader("2. 随伴症状 (14項目)")
@@ -160,9 +160,9 @@ fig.update_traces(textposition='top center', marker=dict(size=10))
 
 # その後に、患者を示す星を巨大に設定 (size=100)
 fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', 
-                         marker=dict(symbol='star', size=100, color='red', line=dict(width=3, color='white')),
+                         marker=dict(symbol='star', size=30, color='red', line=dict(width=3, color='white')),
                          text=["患者"], textposition="top center", 
-                         textfont=dict(size=30, color='red', family="HiraKakuPro-W6")))
+                         textfont=dict(size=20, color='red', family="HiraKakuPro-W6")))
 
 fig.update_layout(plot_bgcolor='white', 
                   xaxis=dict(visible=False, range=[star_x - ZOOM_SCALE, star_x + ZOOM_SCALE]), 
