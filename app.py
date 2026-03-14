@@ -20,22 +20,25 @@ st.markdown("""
 
 st.title("🌿 証空間の地図")
 
-# --- 2. 固定パラメータ（吉野先生の黄金比） ---
+# --- 2. 固定パラメータ ---
 SENSITIVITY = 250.0
 ZOOM_SCALE = 4.0
 
-# --- 3. データの読み込みと正規化 ---
+# --- 3. データの読み込み ---
 @st.cache_data
 def load_and_normalize_data():
-    df = pd.read_csv("kampo_yakuno_integrated.csv")
+    # update_integrated_data.py が出力する最新ファイルを参照
+    df = pd.read_csv("kampo_yakuno_integrated_24dims_final.csv")
     df = df[df['No'] <= 148].copy()
+    
+    # 24次元カテゴリー（解熱・消炎を統合、排膿を解毒へ統合）
     yakuno_cols = [
-        "補気", "理気", "降気", "補血", "駆瘀血", "止血", "利水", "潤水", "温", "清", 
-        "安心鎮静", "認知知能", "鎮痙", "眼精疲労", "清頭目", "排膿", "解毒", "疣贅", 
-        "制吐", "鎮嘔", "瀉下", "黄疸", "安胎", "通乳"
+        "補気", "理気", "降気", "補血", "駆瘀血", "利水", "補腎", "温", "清", "瀉下",
+        "鎮痛", "健胃・整腸", "鎮咳", "安心鎮静", "去痰", "清頭目", "止瀉", 
+        "潤燥", "発表", "鎮痙", "制吐・鎮嘔", "解毒", "解熱・消炎", "止血"
     ]
+    
     raw_values = df[yakuno_cols].fillna(0).values
-    # すべての処方を単位ベクトルに正規化（重力格差の是正）
     normalized_values = normalize(raw_values, norm='l2')
     return df, yakuno_cols, raw_values, normalized_values
 
@@ -43,67 +46,66 @@ df_base, yakuno_cols, yakuno_data_raw, yakuno_data_norm = load_and_normalize_dat
 
 # --- 4. サイドバー：患者入力 ---
 st.sidebar.header("👤 患者の病態入力")
-sex = st.sidebar.radio("性別", ["男性", "女性"], index=1, horizontal=True)
-age = st.sidebar.number_input("患者の年齢", min_value=0, max_value=120, value=40, step=1)
 
-# 計算エンジンの選択
-engine = st.sidebar.selectbox("計算エンジン", ["幾何学的射影 (地図固定)", "149番目として全計算 (地図動的)"])
-
-st.sidebar.subheader("1. 基本の10指標 (証)")
-
-# 【設定】デフォルト値を0.1に引き下げ（虚実・寒熱は0.5の中庸を維持）
-defaults = {
-    '虚実': 0.5, '寒': 0.5, '熱': 0.5,
-    '気虚': 0.1, '気鬱': 0.1, '気逆': 0.1,
-    '血虚': 0.1, '瘀血': 0.1, '水毒': 0.1, '腎虚': 0.1
-}
-
+st.sidebar.subheader("1. 証の10指標")
 sho_input = {}
 sho_names = ['虚実', '寒', '熱', '気虚', '気鬱', '気逆', '血虚', '瘀血', '水毒', '腎虚']
 for name in sho_names:
-    label_text = "虚実 (0:虚 ←→ 1:実)" if name == '虚実' else name
-    sho_input[name] = st.sidebar.slider(label_text, 0.0, 1.0, defaults.get(name, 0.0), key=f"slider_{name}")
+    val = 0.5 if name in ['虚実', '寒', '熱'] else 0.1
+    sho_input[name] = st.sidebar.slider(name, 0.0, 1.0, val, key=f"slider_{name}")
 
-st.sidebar.subheader("2. 特定の随伴症状")
+st.sidebar.subheader("2. 随伴症状 (14項目)")
 raw_input = {}
-symptom_labels = ["安心鎮静 (不眠・不安)", "認知知能 (物忘れ)", "鎮痙 (足のつり)", "眼精疲労", "清頭目 (のぼせ・頭痛)", "排膿 (にきび)", "解毒 (かゆみ)", "疣贅 (いぼ)", "制吐・鎮嘔", "瀉下 (便秘)", "黄疸", "安胎", "通乳"]
-for label in symptom_labels:
-    raw_input[label] = st.sidebar.radio(f"{label}", ["なし", "あり"], index=0, horizontal=True, key=f"radio_{label}")
+symptom_mapping = {
+    "痛みの改善 (鎮痛・痺・疝)": "鎮痛",
+    "胃腸の調整 (健胃・整腸)": "健胃・整腸",
+    "咳を鎮める (鎮咳)": "鎮咳",
+    "不眠・不安 (安心鎮静)": "安心鎮静",
+    "痰の改善 (去痰)": "去痰",
+    "のぼせ・目の充血 (清頭目)": "清頭目",
+    "下痢を止める (止瀉)": "止瀉",
+    "乾燥を潤す (潤燥)": "潤燥",
+    "風邪の初期 (発表)": "発表",
+    "筋肉の痙攣 (鎮痙)": "鎮痙",
+    "吐き気 (制吐・鎮嘔)": "制吐・鎮嘔",
+    "化膿・皮膚炎 (解毒)": "解毒",
+    "発熱・炎症 (解熱・消炎)": "解熱・消炎",
+    "出血 (止血)": "止血"
+}
+
+for label in symptom_mapping.keys():
+    raw_input[label] = st.sidebar.radio(label, ["なし", "あり"], index=0, horizontal=True)
 
 # --- 5. 計算ロジック ---
-def create_patient_vec(sho, raw, age, sex):
-    # 背景ノイズを0.001まで極小化
-    p = {k: 0.001 for k in yakuno_cols} 
-    kyo, jitsu = max(0, 0.5-sho['虚実'])*2.0, max(0, sho['虚実']-0.5)*2.0
+def create_patient_vec(sho, raw):
+    p = {k: 0.001 for k in yakuno_cols}
+    kyo_weight = max(0, 0.5 - sho['虚実']) * 4.0
+    jitsu_weight = max(0, sho['虚実'] - 0.5) * 4.0
     
-    # 指標の立ち上がり
-    p["補気"] += (sho['気虚']*3.0) + (kyo*0.5)
-    p["補血"] += (sho['血虚']*3.0) + (kyo*0.5)
-    p["利水"] += (sho['水毒']*3.0)
-    p["駆瘀血"] += (sho['瘀血']*3.0) + (jitsu*0.5)
-    p["理気"] += sho['気鬱']*3.0; p["降気"] += sho['気逆']*3.0
-    p["温"] += sho['寒']*3.0; p["清"] += sho['熱']*3.0
-    
-    if sex == "女性":
-        p["補血"] += 0.2; p["駆瘀血"] += 0.2
-        if raw.get("安胎") == "あり": p["安胎"] = 5.0
-        if raw.get("通乳") == "あり": p["通乳"] = 5.0
-        
-    jk = min(1.0, sho['腎虚'] + max(0, (age-40)*0.02))
-    p["補気"] += jk; p["補血"] += jk; p["潤水"] += jk; p["利水"] += jk
+    # 証の射影
+    p["補気"] += (sho['気虚'] * 3.0) + (kyo_weight * 1.0)
+    p["補血"] += (sho['血虚'] * 3.0) + (kyo_weight * 1.0)
+    p["補腎"] += (sho['腎虚'] * 3.0) + (kyo_weight * 1.0)
+    p["瀉下"] += (jitsu_weight * 2.0)
+    p["駆瘀血"] += (sho['瘀血'] * 3.0) + (jitsu_weight * 0.5)
+    p["理気"] += sho['気鬱'] * 3.0
+    p["降気"] += sho['気逆'] * 3.0
+    p["利水"] += sho['水毒'] * 3.0
+    p["温"] += sho['寒'] * 3.0
+    p["清"] += sho['熱'] * 3.0
 
-    mapping = {"安心鎮静 (不眠・不安)": ["安心鎮静"], "認知知能 (物忘れ)": ["認知知能"], "鎮痙 (足のつり)": ["鎮痙"], "眼精疲労": ["眼精疲労"], "清頭目 (のぼせ・頭痛)": ["清頭目"], "排膿 (にきび)": ["排膿"], "解毒 (かゆみ)": ["解毒"], "疣贅 (いぼ)": ["疣贅"], "制吐・鎮嘔": ["制吐", "鎮嘔"], "瀉下 (便秘)": ["瀉下"], "黄疸": ["黄疸"]}
-    for label, target_keys in mapping.items():
-        if raw.get(label) == "あり":
-            for k in target_keys: p[k] = 5.0
+    # 症状の反映
+    for ui_label, col_name in symptom_mapping.items():
+        if raw.get(ui_label) == "あり":
+            p[col_name] = 5.0
 
-    # 累乗によるシャープ化（シグモイド的な立ち上がり）
     vec = np.array([p[k]**2 for k in yakuno_cols])
     norm = np.linalg.norm(vec)
     return vec / norm if norm > 0 else vec
 
-patient_vec = create_patient_vec(sho_input, raw_input, age, sex)
+patient_vec = create_patient_vec(sho_input, raw_input)
 
+# --- 6. 可視化 ---
 @st.cache_data
 def get_fixed_coords(norm_data):
     tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
@@ -112,49 +114,31 @@ def get_fixed_coords(norm_data):
 coords = get_fixed_coords(yakuno_data_norm)
 df_base['x'], df_base['y'] = coords[:, 0], coords[:, 1]
 
-if engine == "幾何学的射影 (地図固定)":
-    dists = euclidean_distances([patient_vec], yakuno_data_norm)[0]
-    near_indices = dists.argsort()[:3]
-    near_dists = dists[near_indices]
-    near_coords = coords[near_indices]
-    d_min = near_dists.min()
-    weights = np.exp(-SENSITIVITY * (near_dists - d_min) / (near_dists.max() - d_min + 1e-9))
-    star_x = (near_coords[:, 0] * weights).sum() / weights.sum()
-    star_y = (near_coords[:, 1] * weights).sum() / weights.sum()
-    df_calc = df_base.copy()
-else:
-    # --- 【修正済み】全計算モード ---
-    full_data = np.vstack([yakuno_data_norm, patient_vec]) 
-    tsne = TSNE(n_components=2, perplexity=25, random_state=42, init='pca', learning_rate='auto')
-    full_coords = tsne.fit_transform(full_data)
-    df_calc = df_base.copy()
-    df_calc['x'], df_calc['y'] = full_coords[:-1, 0], full_coords[:-1, 1]
-    star_x, star_y = full_coords[-1, 0], full_coords[-1, 1]
+dists = euclidean_distances([patient_vec], yakuno_data_norm)[0]
+near_indices = dists.argsort()[:3]
+near_dists = dists[near_indices]
+near_coords = coords[near_indices]
+d_min = near_dists.min()
+weights = np.exp(-SENSITIVITY * (near_dists - d_min) / (near_dists.max() - d_min + 1e-9))
+star_x = (near_coords[:, 0] * weights).sum() / weights.sum()
+star_y = (near_coords[:, 1] * weights).sum() / weights.sum()
 
-# --- 6. ランキング表示（デュアル・並列） ---
-df_calc['cos_sim'] = cosine_similarity([patient_vec], yakuno_data_norm)[0]
-df_calc['dist_2d'] = np.sqrt((df_calc['x'] - star_x)**2 + (df_calc['y'] - star_y)**2)
-df_calc['prox_2d'] = (1 - (df_calc['dist_2d'] / (df_calc['dist_2d'].max() + 1e-9)))
+df_base['cos_sim'] = cosine_similarity([patient_vec], yakuno_data_norm)[0]
+df_base['dist_2d'] = np.sqrt((df_base['x'] - star_x)**2 + (df_base['y'] - star_y)**2)
+df_base['prox_2d'] = (1 - (df_base['dist_2d'] / (df_base['dist_2d'].max() + 1e-9)))
 
 st.subheader("🌟 推奨処方")
 c_left, c_right = st.columns(2)
 with c_left:
-    st.write("**24次元でのコサイン類似度**")
-    top_cos = df_calc.sort_values('cos_sim', ascending=False).head(3)
-    cols = st.columns(3)
-    for i, (idx, row) in enumerate(top_cos.iterrows()):
-        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['cos_sim']:.1%}")
+    st.write("**24次元類似度**")
+    for i, (idx, row) in enumerate(df_base.sort_values('cos_sim', ascending=False).head(3).iterrows()):
+        st.write(f"{i+1}. {row['formula']} ({row['cos_sim']:.1%})")
 with c_right:
-    st.write("**2D地図上の近接 (位置)**")
-    top_dist = df_calc.sort_values('dist_2d', ascending=True).head(3)
-    cols = st.columns(3)
-    for i, (idx, row) in enumerate(top_dist.iterrows()):
-        cols[i].metric(f"{i+1}. {row['formula']}", f"{row['prox_2d']:.1%}")
+    st.write("**地図上の近接**")
+    for i, (idx, row) in enumerate(df_base.sort_values('dist_2d').head(3).iterrows()):
+        st.write(f"{i+1}. {row['formula']} ({row['prox_2d']:.1%})")
 
-st.write("---")
-
-fig = px.scatter(df_calc, x='x', y='y', text='formula', color='cos_sim', color_continuous_scale='Viridis', hover_name='formula', height=800)
-fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', marker=dict(symbol='star', size=80, color='red', line=dict(width=3, color='black')), text=["149: 患者"], textposition="top center", textfont=dict(size=22, color='red', family="HiraKakuPro-W6")))
-fig.update_traces(textposition='top center', marker=dict(size=12))
-fig.update_layout(plot_bgcolor='white', xaxis=dict(visible=False, range=[star_x - ZOOM_SCALE, star_x + ZOOM_SCALE]), yaxis=dict(visible=False, range=[star_y - ZOOM_SCALE, star_y + ZOOM_SCALE]), showlegend=False, uirevision='constant', margin=dict(l=10, r=10, t=10, b=10))
+fig = px.scatter(df_base, x='x', y='y', text='formula', color='cos_sim', color_continuous_scale='Viridis', height=800)
+fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', marker=dict(symbol='star', size=30, color='red'), text=["患者"], textposition="top center"))
+fig.update_layout(xaxis=dict(range=[star_x - ZOOM_SCALE, star_x + ZOOM_SCALE]), yaxis=dict(range=[star_y - ZOOM_SCALE, star_y + ZOOM_SCALE]))
 st.plotly_chart(fig, use_container_width=True)
