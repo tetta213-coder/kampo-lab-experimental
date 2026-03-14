@@ -62,7 +62,7 @@ for name in sho_names:
 
 st.sidebar.subheader("2. 随伴症状 (14項目)")
 raw_input = {}
-# ご指定いただいたUIラベルへの修正
+# ラベルの調整
 symptom_mapping = {
     "1. 痛み (鎮痛・痺・疝)": "鎮痛",
     "2. 胃腸症状 (健胃・整腸)": "健胃・整腸",
@@ -155,13 +155,15 @@ fig = px.scatter(df_base, x='x', y='y', text='formula', color='cos_sim',
                  color_continuous_scale='Viridis', height=800,
                  labels={'cos_sim': '類似度'})
 
-# 患者を示す星を大きく設定 (size=60)
-fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', 
-                         marker=dict(symbol='star', size=60, color='red', line=dict(width=3, color='white')),
-                         text=["患者"], textposition="top center", 
-                         textfont=dict(size=22, color='red', family="HiraKakuPro-W6")))
-
+# 処方データのラベルと点サイズを先に固定（これを行わないと後で星が上書きされる）
 fig.update_traces(textposition='top center', marker=dict(size=10))
+
+# その後に、患者を示す星を巨大に設定 (size=100)
+fig.add_trace(go.Scatter(x=[star_x], y=[star_y], mode='markers+text', 
+                         marker=dict(symbol='star', size=100, color='red', line=dict(width=3, color='white')),
+                         text=["患者"], textposition="top center", 
+                         textfont=dict(size=30, color='red', family="HiraKakuPro-W6")))
+
 fig.update_layout(plot_bgcolor='white', 
                   xaxis=dict(visible=False, range=[star_x - ZOOM_SCALE, star_x + ZOOM_SCALE]), 
                   yaxis=dict(visible=False, range=[star_y - ZOOM_SCALE, star_y + ZOOM_SCALE]),
