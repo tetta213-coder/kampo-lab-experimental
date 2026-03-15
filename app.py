@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.manifold import TSNE
-from sklearn.metrics.pairwise import cosine_similarity, euclidean_distances
+from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import normalize
 import plotly.express as px
 import plotly.graph_objects as go
@@ -16,17 +16,23 @@ st.set_page_config(page_title="漢方24次元マッピング", layout="wide")
 SENSITIVITY = 250.0
 ZOOM_SCALE = 4.0
 
+# ユーザー提供のCSVヘッダーと完全に一致させる
 YAKUNO_COLS = [
     "補気", "理気", "降気", "補血", "駆瘀血", "利水", "補腎", "温", "清", "瀉下",
-    "鎮痛", "健胃・整腸", "鎮咳", "安心鎮静", "去痰", "清頭目", "止瀉", "潤燥", "発表", "鎮痙", "制吐", "解毒", "消炎", "止血"
+    "鎮痛", "健胃・整腸", "鎮咳", "安心鎮静", "去痰", "清頭目", "止瀉", "潤燥", "発表", "鎮痙", "制吐・鎮嘔", "解毒", "解熱・消炎", "止血"
 ]
 
 @st.cache_data
 def load_data():
     if os.path.exists("kampo_yakuno_integrated.csv"):
         df = pd.read_csv("kampo_yakuno_integrated.csv")
+        
+        # カラムの存在チェック（デバッグ用）
+        missing_cols = [col for col in YAKUNO_COLS if col not in df.columns]
+        if missing_cols:
+            st.error(f"CSVに存在しない列名があります: {missing_cols}")
+            st.stop()
     else:
-        # 動作確認用のダミーデータ生成
         st.warning("kampo_yakuno_integrated.csv が見つかりません。ダミーデータを使用します。")
         np.random.seed(42)
         dummy_data = np.random.randint(0, 3, size=(148, 24))
@@ -107,7 +113,7 @@ with st.expander("【その他の特記事項】", expanded=True):
 if st.button("24次元ベクトルを算出してマップにプロット", type="primary"):
     vec = np.zeros(24)
 
-    # 順序を YAKUNO_COLS に一致させる
+    # 順序を YAKUNO_COLS (CSVの列順) に完全に一致させる
     vec[0] = (no_energy * 3.02) + (tired * 2.19) + (appetite_inv * 1.25) # 補気
     vec[1] = (depressed * 5.92) + (throat_jam * 1.77) + (chest_jam * 1.70) + (stomach_jam * 1.12) # 理気
     vec[2] = (irritated * 2.62) # 降気
@@ -129,9 +135,9 @@ if st.button("24次元ベクトルを算出してマップにプロット", type
     vec[17] = dry_skin # 潤燥
     vec[18] = cold_sens # 発表
     vec[19] = cramps # 鎮痙
-    vec[20] = nausea # 制吐
+    vec[20] = nausea # 制吐・鎮嘔
     vec[21] = acne # 解毒
-    vec[22] = throat_pain # 消炎
+    vec[22] = throat_pain # 解熱・消炎
     vec[23] = max(blood_stool, sub_bleed, hemorrhoid) # 止血
 
     norm = np.linalg.norm(vec)
