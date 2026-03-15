@@ -67,8 +67,9 @@ with st.sidebar:
     with st.expander("1. 基本情報", expanded=True):
         age = st.number_input("年齢", min_value=0, max_value=120, value=40)
         sex = st.radio("性別", options=["男性", "女性"], index=1, horizontal=True)
-        height = st.number_input("身長 (cm)", min_value=50.0, max_value=250.0, value=160.0)
-        weight = st.number_input("体重 (kg)", min_value=10.0, max_value=200.0, value=55.0)
+        # 修正箇所1：身長・体重を整数(int)に変更
+        height = st.number_input("身長 (cm)", min_value=50, max_value=250, value=160)
+        weight = st.number_input("体重 (kg)", min_value=10, max_value=200, value=55)
         
         # BMI自動計算
         height_m = height / 100.0
@@ -95,7 +96,8 @@ with st.sidebar:
         stomach_jam = likert_radio("腹が張る")
         
         appetite_opts = {0: "ない", 1: "普通", 2: "旺盛"}
-        appetite_raw = st.radio("食欲", options=[0, 1, 2], format_func=lambda x: appetite_opts[x], horizontal=True)
+        # 修正箇所2：食欲のデフォルトを「普通」にするため index=1 を追加
+        appetite_raw = st.radio("食欲", options=[0, 1, 2], index=1, format_func=lambda x: appetite_opts[x], horizontal=True)
         appetite_inv = 2 - appetite_raw 
 
         acne = likert_radio("にきび")
@@ -106,7 +108,11 @@ with st.sidebar:
         blur = likert_radio("目がかすむ")
         
         leg_pain = likert_radio("足腰膝など下半身の痛み")
-        night_urine = likert_radio("夜間にトイレに立つ回数")
+        
+        # 修正箇所3：夜間にトイレに立つ回数の専用ラベルを作成
+        urine_opts = {0: "0回", 1: "1回", 2: "2回", 3: "3回以上"}
+        night_urine = st.radio("夜間にトイレに立つ回数", options=list(urine_opts.keys()), format_func=lambda x: urine_opts[x], horizontal=True)
+        
         stomach_rumble = likert_radio("腹がゴロゴロ鳴る")
         dizzy = likert_radio("めまい")
 
@@ -218,4 +224,4 @@ if calc_button:
 
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("👈 左のサイドバーから患者の症状を入力し、「プロットを実行」を押してください。")
+    st.info("👈 左のサイドバーから患者の症状を入力し、「ベクトルを正規化してマップにプロット」を押してください。")
